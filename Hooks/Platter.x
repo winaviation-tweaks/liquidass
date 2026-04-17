@@ -200,6 +200,8 @@ static BOOL LGPlatterHostLooksLikeBannerContext(UIView *view) {
 static void LGInjectBannerPlatterGlass(UIView *host) {
     LGAssertMainThread();
     if (!LGBannerEnabled()) {
+        LGDebugLog(@"banner inject bail reason=disabled host=%@",
+                   host ? NSStringFromClass(host.class) : @"(null)");
         LGRemoveLiveBackdropCaptureView(host, kBannerBackdropViewKey);
         LGCleanupLockscreenHost(host);
         return;
@@ -231,6 +233,9 @@ static void LGInjectBannerPlatterGlass(UIView *host) {
                                          kBannerBackdropViewKey,
                                          fallbackSnapshot,
                                          fallbackOrigin)) {
+        LGDebugLog(@"banner inject bail reason=rendering-mode-failed host=%@ fallbackSnapshot=%d",
+                   host ? NSStringFromClass(host.class) : @"(null)",
+                   fallbackSnapshot ? 1 : 0);
         LGCleanupLockscreenHost(host);
         return;
     }

@@ -1117,7 +1117,9 @@
     if (startIndex < items.count) {
         NSDictionary *candidate = items[startIndex];
         NSString *key = candidate[@"key"];
-        if ([candidate[@"type"] isEqualToString:@"switch"] && [key hasSuffix:@".Enabled"]) {
+        if ([candidate[@"type"] isEqualToString:@"switch"]
+            && [key hasSuffix:@".Enabled"]
+            && [candidate[@"controls_following_panel"] boolValue]) {
             enabledItem = candidate;
             startIndex += 1;
         }

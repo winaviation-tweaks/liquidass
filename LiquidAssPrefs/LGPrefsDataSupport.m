@@ -277,7 +277,12 @@ NSDictionary *LGSliderSetting(NSString *key, NSString *title, NSString *subtitle
 }
 
 NSDictionary *LGGlassEnabledSetting(NSString *key, BOOL fallback) {
-    return LGSwitchSetting(key, LGLocalized(@"prefs.control.enabled"), LGLocalized(@"prefs.subtitle.enabled"), fallback);
+    NSMutableDictionary *item = [LGSwitchSetting(key,
+                                                 LGLocalized(@"prefs.control.enabled"),
+                                                 LGLocalized(@"prefs.subtitle.enabled"),
+                                                 fallback) mutableCopy];
+    item[@"controls_following_panel"] = @YES;
+    return [item copy];
 }
 
 NSDictionary *LGGlassRenderingModeSetting(NSString *key) {
@@ -711,6 +716,10 @@ NSArray<NSDictionary *> *LGMoreOptionsItems(void) {
         LGSwitchSetting(@"AppLibrary.CompositeSnapshot",
                         LGLocalized(@"prefs.misc.app_library_composite.title"),
                         LGLocalized(@"prefs.misc.app_library_composite.subtitle"),
+                        NO),
+        LGSwitchSetting(@"DebugLogging.Enabled",
+                        LGLocalized(@"prefs.misc.debug_logging.title"),
+                        LGLocalized(@"prefs.misc.debug_logging.subtitle"),
                         NO),
         LGNavSetting(LGLocalized(@"prefs.misc.experimental.title"),
                      LGLocalized(@"prefs.misc.experimental.subtitle"),

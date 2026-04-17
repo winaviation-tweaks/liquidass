@@ -39,6 +39,7 @@ BOOL LG_prefBool(NSString *key, BOOL fallback);
 CGFloat LG_prefFloat(NSString *key, CGFloat fallback);
 NSInteger LG_prefInteger(NSString *key, NSInteger fallback);
 NSString *LG_prefString(NSString *key, NSString *fallback);
+NSString *LGDefaultRenderingModeForKey(NSString *key);
 BOOL LG_globalEnabled(void);
 BOOL LG_prefersLiveCapture(NSString *key);
 void LGReloadPreferences(void);

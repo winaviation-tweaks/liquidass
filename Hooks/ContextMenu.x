@@ -62,7 +62,24 @@ static UIView *findDescendantMatching(UIView *root, BOOL (^match)(UIView *view))
     return nil;
 }
 
+static BOOL LGContextMenuCellContextViewIsStock(UIView *view) {
+    if (!view) return NO;
+    if (![NSStringFromClass(view.class) isEqualToString:@"_UIContextMenuCellContextView"]) return NO;
+
+    UIView *parent = view.superview;
+    if (!parent || ![NSStringFromClass(parent.class) isEqualToString:@"_UIContextMenuCell"]) return NO;
+
+    return findDescendantMatching(view, ^BOOL(UIView *candidate) {
+        return [candidate isKindOfClass:[UIStackView class]];
+    }) != nil;
+}
+
 static BOOL shouldRoundContextMenuSubview(UIView *view) {
+    NSString *clsName = NSStringFromClass(view.class);
+    if ([clsName isEqualToString:@"_UIContextMenuCellContextView"]) {
+        return LGContextMenuCellContextViewIsStock(view);
+    }
+
     CGSize size = view.bounds.size;
     if (size.width < 20.0 || size.height < 20.0) return NO;
     if (size.width <= 2.0 || size.height <= 2.0) return NO;

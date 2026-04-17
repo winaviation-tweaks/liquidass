@@ -120,6 +120,8 @@
 "prefs.misc.language.subtitle" = "Select the language for this preferences UI.";
 "prefs.misc.app_library_composite.title" = "AL samples app icons";
 "prefs.misc.app_library_composite.subtitle" = "Also samples homescreen icons and not just the wallpaper in App Library. Accurate to iOS 26 but can look weird on certain setups.";
+"prefs.misc.debug_logging.title" = "Debug Logging";
+"prefs.misc.debug_logging.subtitle" = "Enable verbose diagnostic logs written through LGDebugLog.";
 "prefs.misc.lockscreen_clock.title" = "Lockscreen Clock";
 "prefs.misc.lockscreen_clock.subtitle" = "[EXPERIMENTAL] Enable the custom iOS 16+ lockscreen glass clock.";
 "prefs.misc.settings_controls.title" = "Settings Sliders and Switches";

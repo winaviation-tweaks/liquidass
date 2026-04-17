@@ -2,23 +2,19 @@
 #import "LGMetalShaderSource.h"
 #import <os/lock.h>
 
-#ifndef LG_DEBUG_VERBOSE
-#define LG_DEBUG_VERBOSE 0
-#endif
-
 NSString * const LGPrefsDomain = @"dylv.liquidassprefs";
 CFStringRef const LGPrefsChangedNotification = CFSTR("dylv.liquidassprefs/Reload");
 CFStringRef const LGPrefsRespringNotification = CFSTR("dylv.liquidassprefs/Respring");
 const char * const LGPrefsChangedNotificationCString = "dylv.liquidassprefs/Reload";
 const char * const LGPrefsRespringNotificationCString = "dylv.liquidassprefs/Respring";
 const CGFloat LGBannerDefaultCornerRadius = 18.5;
-const CGFloat LGBannerDefaultBezelWidth = 16.0;
+const CGFloat LGBannerDefaultBezelWidth = 18.0;
 const CGFloat LGBannerDefaultBlur = 40.0;
 const CGFloat LGBannerDefaultDarkTintAlpha = 0.5;
 const CGFloat LGBannerDefaultGlassThickness = 150.0;
 const CGFloat LGBannerDefaultLightTintAlpha = 0.8;
-const CGFloat LGBannerDefaultRefractionScale = 0.5;
-const CGFloat LGBannerDefaultRefractiveIndex = 0.5;
+const CGFloat LGBannerDefaultRefractionScale = 1.5;
+const CGFloat LGBannerDefaultRefractiveIndex = 4.0;
 const CGFloat LGBannerDefaultSpecularOpacity = 0.8;
 const CGFloat LGBannerDefaultWallpaperScale = 1.0;
 NSString * const LGBannerWindowClassName = @"SBBannerWindow";
@@ -240,12 +236,19 @@ NSString *LG_prefString(NSString *key, NSString *fallback) {
     return fallback;
 }
 
+NSString *LGDefaultRenderingModeForKey(NSString *key) {
+    if ([key isEqualToString:@"Banner.RenderingMode"]) {
+        return LGRenderingModeLiveCapture;
+    }
+    return LGRenderingModeSnapshot;
+}
+
 BOOL LG_globalEnabled(void) {
     return LG_prefBool(@"Global.Enabled", NO);
 }
 
 BOOL LG_prefersLiveCapture(NSString *key) {
-    return [LG_prefString(key, LGRenderingModeSnapshot) isEqualToString:LGRenderingModeLiveCapture];
+    return [LG_prefString(key, LGDefaultRenderingModeForKey(key)) isEqualToString:LGRenderingModeLiveCapture];
 }
 
 void LGLog(NSString *format, ...) {
@@ -258,15 +261,15 @@ void LGLog(NSString *format, ...) {
 }
 
 void LGDebugLog(NSString *format, ...) {
-#if LG_DEBUG_VERBOSE
+    if (!LG_prefBool(@"DebugLogging.Enabled", NO)) {
+        (void)format;
+        return;
+    }
     va_list args;
     va_start(args, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     LGLog(@"%@", message);
-#else
-    (void)format;
-#endif
 }
 
 void LGAssertMainThread(void) {

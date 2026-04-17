@@ -1385,13 +1385,20 @@ static void LG_scheduleLockscreenWallpaperRefresh(NSString *reason) {
     LGResetLockscreenSnapshotCaches();
     NSUInteger token = ++sPendingLockscreenWallpaperRefreshToken;
     LGDebugLog(@"lockscreen wallpaper refresh scheduled reason=%@", reason ?: @"(unknown)");
-    LGScheduleBlockAfterDelay(0.30, ^{
-        if (!LG_globalEnabled()) return;
-        if (token != sPendingLockscreenWallpaperRefreshToken) return;
-        LGDebugLog(@"lockscreen wallpaper refresh begin reason=%@", reason ?: @"(unknown)");
-        LG_pushLockscreenSnapshotToAllGlassViews();
-        LG_updateRegisteredGlassViews(LGUpdateGroupLockscreen);
-    });
+    static const NSTimeInterval kLockscreenRefreshDelays[] = { 0.18, 0.40, 0.85, 1.60 };
+    for (NSUInteger i = 0; i < sizeof(kLockscreenRefreshDelays) / sizeof(kLockscreenRefreshDelays[0]); i++) {
+        NSTimeInterval delay = kLockscreenRefreshDelays[i];
+        LGScheduleBlockAfterDelay(delay, ^{
+            if (!LG_globalEnabled()) return;
+            if (token != sPendingLockscreenWallpaperRefreshToken) return;
+            LGDebugLog(@"lockscreen wallpaper refresh begin reason=%@ delay=%.2f",
+                       reason ?: @"(unknown)",
+                       delay);
+            LGResetLockscreenSnapshotCaches();
+            LG_pushLockscreenSnapshotToAllGlassViews();
+            LG_updateRegisteredGlassViews(LGUpdateGroupLockscreen);
+        });
+    }
 }
 
 static void LG_handlePrefsChanged(void) {

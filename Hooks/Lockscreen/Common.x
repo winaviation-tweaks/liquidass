@@ -219,8 +219,12 @@ void LGLockscreenInjectGlassWithSettingsAndMode(UIView *host,
                                                 CGFloat lightTintAlpha,
                                                 CGFloat darkTintAlpha) {
     UIImage *wallpaper = LGGetLockscreenSnapshotCached();
-    if (!wallpaper && !LG_prefersLiveCapture(renderingModeKey))
+    if (!wallpaper && !LG_prefersLiveCapture(renderingModeKey)) {
+        LGDebugLog(@"lockscreen inject bail reason=no-snapshot key=%@ host=%@",
+                   renderingModeKey,
+                   host ? NSStringFromClass(host.class) : @"(null)");
         return;
+    }
     CGPoint wallpaperOrigin = LG_getLockscreenWallpaperOrigin();
     LGLockscreenInjectGlassWithImageAndSettings(host,
                                                 wallpaper,
@@ -253,12 +257,17 @@ void LGLockscreenInjectGlassWithImageAndSettings(UIView *host,
                                                  CGFloat lightTintAlpha,
                                                  CGFloat darkTintAlpha) {
     if (!LGLockscreenEnabled()) {
+        LGDebugLog(@"lockscreen inject bail reason=disabled host=%@",
+                   host ? NSStringFromClass(host.class) : @"(null)");
         LGCleanupLockscreenHost(host);
         return;
     }
 
-    if (!wallpaper)
+    if (!wallpaper) {
+        LGDebugLog(@"lockscreen inject bail reason=no-wallpaper host=%@",
+                   host ? NSStringFromClass(host.class) : @"(null)");
         return;
+    }
 
     LiquidGlassView *glass = LGLockscreenEnsureConfiguredGlass(host,
                                                                wallpaperOrigin,
@@ -285,6 +294,9 @@ void LGLockscreenInjectGlassWithImageAndSettings(UIView *host,
                                          kLockBackdropViewKey,
                                          wallpaper,
                                          wallpaperOrigin)) {
+        LGDebugLog(@"lockscreen inject bail reason=rendering-mode-failed key=%@ host=%@",
+                   resolvedRenderingModeKey,
+                   host ? NSStringFromClass(host.class) : @"(null)");
         return;
     }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),

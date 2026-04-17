@@ -210,6 +210,7 @@ static void injectIntoDock(UIView *self_) {
     CGPoint wallpaperOrigin = CGPointZero;
     UIImage *wallpaper = LG_getHomescreenSnapshot(&wallpaperOrigin);
     if (!wallpaper && !LG_prefersLiveCapture(@"Dock.RenderingMode")) {
+        LGDebugLog(@"dock inject bail reason=no-snapshot mode=snapshot");
         if ([objc_getAssociatedObject(self_, kDockRetryKey) boolValue]) return;
         objc_setAssociatedObject(self_, kDockRetryKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
@@ -256,6 +257,8 @@ static void injectIntoDock(UIView *self_) {
                                          kDockBackdropViewKey,
                                          wallpaper,
                                          wallpaperOrigin)) {
+        LGDebugLog(@"dock inject bail reason=rendering-mode-failed mode=%@",
+                   LG_prefString(@"Dock.RenderingMode", LGDefaultRenderingModeForKey(@"Dock.RenderingMode")));
         objc_setAssociatedObject(self_, kDockRetryKey, nil, OBJC_ASSOCIATION_ASSIGN);
         return;
     }

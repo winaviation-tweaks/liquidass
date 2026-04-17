@@ -57,7 +57,17 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
                                          CGSize *outSamplingResolution) {
     LGAssertMainThread();
     UIView *superview = host.superview;
-    if (!host || !superview || !host.window || !glass || !associationKey) return NO;
+    if (!host || !glass || !associationKey) {
+        LGDebugLog(@"live capture bail reason=invalid-args host=%@", host ? NSStringFromClass(host.class) : @"(null)");
+        return NO;
+    }
+    if (!superview || !host.window) {
+        LGDebugLog(@"live capture bail reason=no-window-or-superview host=%@ window=%d superview=%d",
+                   NSStringFromClass(host.class),
+                   host.window ? 1 : 0,
+                   superview ? 1 : 0);
+        return NO;
+    }
 
     CALayer *hostLayer = host.layer.presentationLayer ?: host.layer;
     CGRect hostFrame = [hostLayer convertRect:hostLayer.bounds toLayer:superview.layer];
@@ -66,6 +76,9 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
     if (!isfinite(captureSize.width) || !isfinite(captureSize.height) ||
         !isfinite(captureOrigin.x) || !isfinite(captureOrigin.y) ||
         captureSize.width <= 1.0f || captureSize.height <= 1.0f) {
+        LGDebugLog(@"live capture bail reason=invalid-host-frame host=%@ frame=%@",
+                   NSStringFromClass(host.class),
+                   NSStringFromCGRect(hostFrame));
         return NO;
     }
 
@@ -77,6 +90,9 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
         !isfinite(CGRectGetHeight(captureRectInScreen)) ||
         CGRectGetWidth(captureRectInScreen) <= 1.0f ||
         CGRectGetHeight(captureRectInScreen) <= 1.0f) {
+        LGDebugLog(@"live capture bail reason=invalid-screen-rect host=%@ rect=%@",
+                   NSStringFromClass(host.class),
+                   NSStringFromCGRect(captureRectInScreen));
         return NO;
     }
     LGLiveBackdropCaptureView *backdropView = objc_getAssociatedObject(host, associationKey);
@@ -114,7 +130,14 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
         UIGraphicsPopContext();
         CGContextRestoreGState(ctx);
     }];
-    if (!ok) return NO;
+    if (!ok) {
+        LGDebugLog(@"live capture bail reason=draw-failed host=%@ rect=%@ px=%zux%zu",
+                   NSStringFromClass(host.class),
+                   NSStringFromCGRect(captureRectInScreen),
+                   pixelWidth,
+                   pixelHeight);
+        return NO;
+    }
 
     if (outOrigin) *outOrigin = captureRectInScreen.origin;
     if (outSamplingResolution) {
@@ -131,9 +154,22 @@ BOOL LGApplyRenderingModeToGlassHost(UIView *host,
                                      UIImage *snapshot,
                                      CGPoint snapshotOrigin) {
     LGAssertMainThread();
-    if (!host || !glass || !renderingModeKey.length || !associationKey) return NO;
+    if (!host || !glass || !renderingModeKey.length || !associationKey) {
+        LGDebugLog(@"rendering mode bail reason=invalid-args key=%@ host=%@",
+                   renderingModeKey ?: @"(null)",
+                   host ? NSStringFromClass(host.class) : @"(null)");
+        return NO;
+    }
 
-    if (LG_prefersLiveCapture(renderingModeKey)) {
+    NSString *resolvedMode = LG_prefString(renderingModeKey, LGDefaultRenderingModeForKey(renderingModeKey));
+    BOOL prefersLiveCapture = [resolvedMode isEqualToString:LGRenderingModeLiveCapture];
+    LGDebugLog(@"rendering mode resolve key=%@ mode=%@ host=%@ snapshot=%d",
+               renderingModeKey,
+               resolvedMode,
+               NSStringFromClass(host.class),
+               snapshot ? 1 : 0);
+
+    if (prefersLiveCapture) {
         CGPoint captureOrigin = CGPointZero;
         CGSize samplingResolution = CGSizeZero;
         if (LGCaptureLiveBackdropTextureForHost(host,
@@ -141,6 +177,11 @@ BOOL LGApplyRenderingModeToGlassHost(UIView *host,
                                                 associationKey,
                                                 &captureOrigin,
                                                 &samplingResolution)) {
+            LGDebugLog(@"rendering mode live ok key=%@ host=%@ origin=%@ sampling=%@",
+                       renderingModeKey,
+                       NSStringFromClass(host.class),
+                       NSStringFromCGPoint(captureOrigin),
+                       NSStringFromCGSize(samplingResolution));
             glass.wallpaperOrigin = captureOrigin;
             glass.wallpaperSamplingResolution = samplingResolution;
             [glass updateOrigin];
@@ -148,16 +189,32 @@ BOOL LGApplyRenderingModeToGlassHost(UIView *host,
         }
         LGRemoveLiveBackdropCaptureView(host, associationKey);
         if (!snapshot) {
+            LGDebugLog(@"rendering mode live bail reason=no-fallback-snapshot key=%@ host=%@",
+                       renderingModeKey,
+                       NSStringFromClass(host.class));
             return NO;
         }
+        LGDebugLog(@"rendering mode live fallback key=%@ host=%@ fallback=snapshot",
+                   renderingModeKey,
+                   NSStringFromClass(host.class));
     } else {
         LGRemoveLiveBackdropCaptureView(host, associationKey);
     }
 
-    if (!snapshot) return NO;
+    if (!snapshot) {
+        LGDebugLog(@"rendering mode snapshot bail reason=no-snapshot key=%@ host=%@",
+                   renderingModeKey,
+                   NSStringFromClass(host.class));
+        return NO;
+    }
     glass.wallpaperImage = snapshot;
     glass.wallpaperOrigin = snapshotOrigin;
     glass.wallpaperSamplingResolution = CGSizeZero;
     [glass updateOrigin];
+    LGDebugLog(@"rendering mode snapshot ok key=%@ host=%@ origin=%@ size=%@",
+               renderingModeKey,
+               NSStringFromClass(host.class),
+               NSStringFromCGPoint(snapshotOrigin),
+               NSStringFromCGSize(snapshot.size));
     return YES;
 }

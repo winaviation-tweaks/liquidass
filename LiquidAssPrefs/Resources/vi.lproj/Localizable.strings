@@ -120,6 +120,8 @@
 "prefs.misc.language.subtitle" = "Chọn ngôn ngữ cho giao diện tuỳ chọn này.";
 "prefs.misc.app_library_composite.title" = "AL lấy mẫu cả icon app";
 "prefs.misc.app_library_composite.subtitle" = "Trong App Library sẽ lấy mẫu cả icon ở Homescreen chứ không chỉ wallpaper. Chính xác hơn với iOS 26 nhưng có thể nhìn hơi lạ ở vài setup.";
+"prefs.misc.debug_logging.title" = "Ghi log debug";
+"prefs.misc.debug_logging.subtitle" = "Bật log chẩn đoán chi tiết được ghi vào /tmp/LiquidAss.log";
 "prefs.misc.lockscreen_clock.title" = "Đồng hồ màn hình khóa";
 "prefs.misc.lockscreen_clock.subtitle" = "[THỬ NGHIỆM] Bật đồng hồ kính tùy chỉnh cho màn hình khóa trên iOS 16+.";
 "prefs.misc.settings_controls.title" = "Slider và switch trong Cài đặt";
