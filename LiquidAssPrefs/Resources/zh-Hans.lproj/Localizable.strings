@@ -11,7 +11,7 @@
 "prefs.control.refraction" = "折射";
 "prefs.control.specular" = "高光";
 "prefs.control.quality" = "质量";
-"prefs.control.fps_limit" = "FPS 限制";
+"prefs.control.fps_limit" = "FPS 帧率限制";
 "prefs.control.floating_radius" = "悬浮圆角";
 "prefs.control.full_screen_radius" = "全屏圆角";
 "prefs.control.home_button_radius" = "Home 按钮圆角";
