@@ -82,16 +82,13 @@ release-all: release-rootless release-rootful release-roothide
 
 release-rootless:
 	@echo "Building rootless package..."
-	@$(MAKE) clean
-	@$(MAKE) package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+	@$(MAKE) clean package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
 
 release-rootful:
 	@echo "Building rootful package..."
-	@$(MAKE) clean
-	@$(MAKE) package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=
+	@$(MAKE) clean package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1
 
 release-roothide:
 	@echo "Building roothide package..."
 	@echo "Note: roothide builds require the roothide Theos fork."
-	@$(MAKE) clean
-	@$(MAKE) package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
+	@$(MAKE) clean package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
