@@ -1,11 +1,3 @@
-# Build for a real device:
-# make package ARCHS="arm64 arm64e" TARGET="iphone:clang:latest:14.0" FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
-#
-# Release builds:
-# make release
-# make release-rootless
-# make release-rootful
-# make release-roothide
 
 ifeq ($(filter sim,$(MAKECMDGOALS)),sim)
 export TARGET ?= simulator:clang:latest:14.0
@@ -37,9 +29,6 @@ include $(THEOS_MAKE_PATH)/aggregate.mk
 
 .PHONY: sim remove release release-all release-rootless release-rootful release-roothide
 
-# Cross-platform replacement for macOS-only /usr/libexec/PlistBuddy.
-# Usage:
-# $(SET_PLIST_LABEL) "App Name" path/to/plist1 path/to/plist2
 SET_PLIST_LABEL = python3 -c 'exec("import os, plistlib, sys\nlabel = sys.argv[1]\nfor path in sys.argv[2:]:\n    if not os.path.exists(path):\n        continue\n    with open(path, \"rb\") as f:\n        data = plistlib.load(f)\n    if isinstance(data, dict):\n        entry = data.setdefault(\"entry\", {})\n        if isinstance(entry, dict):\n            entry[\"label\"] = label\n    with open(path, \"wb\") as f:\n        plistlib.dump(data, f)\n    print(\"Updated \" + path)")'
 
 sim:: all
