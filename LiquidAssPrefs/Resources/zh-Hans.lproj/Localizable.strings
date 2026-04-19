@@ -11,12 +11,12 @@
 "prefs.control.refraction" = "折射";
 "prefs.control.specular" = "高光";
 "prefs.control.quality" = "质量";
-"prefs.control.fps_limit" = "FPS 限制";
-"prefs.control.rendering_method" = "Rendering Method";
-"prefs.control.font_weight" = "Font Weight";
-"prefs.control.size_boost" = "Size Boost";
-"prefs.control.embolden" = "Embolden";
-"prefs.control.clock_gap" = "Clock Gap";
+"prefs.control.fps_limit" = "FPS 帧率限制";
+"prefs.control.rendering_method" = "渲染方式";
+"prefs.control.font_weight" = "字体粗细";
+"prefs.control.size_boost" = "放大字体";
+"prefs.control.embolden" = "加粗";
+"prefs.control.clock_gap" = "时钟间距";
 "prefs.control.floating_radius" = "悬浮圆角";
 "prefs.control.full_screen_radius" = "全屏圆角";
 "prefs.control.home_button_radius" = "Home 按钮圆角";
@@ -40,12 +40,11 @@
 "prefs.subtitle.full_screen_radius" = "全屏模式下玻璃视图的圆角程度";
 "prefs.subtitle.home_button_radius" = "带 Home 按钮设备上玻璃视图的圆角程度";
 "prefs.subtitle.icon_spacing" = "图标与标签之间的间距";
-"prefs.subtitle.row_inset" = "操作行的左右内边距";
-"prefs.subtitle.rendering_method" = "Choose whether this surface samples from cached snapshots or live backdrop capture.";
-"prefs.subtitle.font_weight" = "Weight used for the legacy iOS 15 and lower glass clock.";
-"prefs.subtitle.size_boost" = "Scales the legacy clock size relative to the stock layout.";
-"prefs.subtitle.embolden" = "Artificially thickens the legacy clock mask for a fuller look.";
-"prefs.subtitle.clock_gap" = "Vertical gap between the legacy clock and the date text.";
+"prefs.subtitle.row_inset" = "操作行的左右内边距";"prefs.subtitle.rendering_method" = "选择该界面使用缓存快照还是实时背景捕捉";
+"prefs.subtitle.font_weight" = "用于旧版 iOS 15 及以下玻璃时钟的字重";
+"prefs.subtitle.size_boost" = "相对于系统布局缩放旧版时钟大小";
+"prefs.subtitle.embolden" = "人为加粗旧版时钟遮罩以获得更饱满的外观";
+"prefs.subtitle.clock_gap" = "旧版时钟与日期文本之间的垂直间距";
 "prefs.subtitle.global_enabled" = "插件总开关";
 
 "prefs.section.dock.title" = "Dock 栏";
@@ -70,7 +69,7 @@
 "prefs.section.main.subtitle" = "为各个主要界面自定义玻璃特效";
 "prefs.section.misc.title" = "杂项";
 "prefs.section.misc.subtitle" = "注销及更多选项";
-"prefs.section.experimental_rendering.title" = "Rendering Methods";
+"prefs.section.experimental_rendering.title" = "渲染方式";
 "prefs.section.experimental_rendering.subtitle" = "Choose snapshot or live capture for each surface. This is experimental and can be heavy.";
 "prefs.section.experimental_features.title" = "Experimental Features";
 "prefs.section.experimental_features.subtitle" = "Other unstable or niche options.";
