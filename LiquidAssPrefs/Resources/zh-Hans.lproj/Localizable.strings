@@ -100,8 +100,8 @@
 "prefs.value_prompt.message" = "请输入 %@ 到 %@ 之间的数值";
 "prefs.range_format" = "范围：%@ 到 %@";
 
-"prefs.hero.eyebrow" = "没有比这更牛逼的了";
-"prefs.hero.subtitle" = "史上最牛逼的插件";
+"prefs.hero.eyebrow" = "插件之巅，孤独求败！";
+"prefs.hero.subtitle" = "史上最牛逼的插件，没有之一";
 "prefs.surface.homescreen.title" = "主屏幕";
 "prefs.surface.homescreen.subtitle" = "Dock、文件夹、上下文菜单、小组件以及应用图标底层";
 "prefs.surface.lockscreen.title" = "锁屏";
