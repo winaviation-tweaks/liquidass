@@ -10,10 +10,11 @@ UIColor *LGDefaultTintColorForView(UIView *view, CGFloat lightAlpha, CGFloat dar
 UIColor *LGDefaultTintColorForViewWithOverrideKey(UIView *view, CGFloat lightAlpha, CGFloat darkAlpha, NSString *overrideKey);
 NSInteger LGPreferredFramesPerSecondForKey(NSString *key, NSInteger minFPS);
 typedef struct {
+    NSInteger activeCount;
+    NSInteger preferredFPS;
+    CFTimeInterval lastTickTimestamp;
     __strong CADisplayLink *link;
     __strong id driver;
-    // Main-thread only. All mutations are expected to happen behind LGAssertMainThread()-guarded helpers.
-    NSInteger activeCount;
 } LGDisplayLinkState;
 UIView *LGEnsureTintOverlayView(UIView *host,
                                 const void *associationKey,

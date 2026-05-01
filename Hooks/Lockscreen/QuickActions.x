@@ -1,7 +1,7 @@
 #import "Common.h"
 #import "../../Shared/LGPrefAccessors.h"
 
-static BOOL LGLockscreenQuickActionsEnabled(void) { return LGLockscreenEnabled() && LG_prefBool(@"LockscreenQuickActions.Enabled", YES); }
+static BOOL LGLockscreenQuickActionsEnabled(void) { return LG_globalEnabled() && LG_prefBool(@"LockscreenQuickActions.Enabled", YES); }
 LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsBezelWidth, "LockscreenQuickActions.BezelWidth", 12.0)
 LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsGlassThickness, "LockscreenQuickActions.GlassThickness", 80.0)
 LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsRefractionScale, "LockscreenQuickActions.RefractionScale", 1.2)
@@ -12,7 +12,22 @@ LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsWallpaperScale, "LockscreenQuickActio
 LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsLightTintAlpha, "LockscreenQuickActions.LightTintAlpha", 0.1)
 LG_FLOAT_PREF_FUNC(LGLockscreenQuickActionsDarkTintAlpha, "LockscreenQuickActions.DarkTintAlpha", 0.0)
 
+static void LGLockscreenQuickActionsApplyLightAppearance(UIView *view) {
+    if (@available(iOS 13.0, *)) {
+        view.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+        if ([view isKindOfClass:[UIVisualEffectView class]]) {
+            ((UIVisualEffectView *)view).contentView.overrideUserInterfaceStyle = UIUserInterfaceStyleLight;
+        }
+    }
+}
+
 static void LGLockscreenQuickActionsResetHost(UIView *view) {
+    if (@available(iOS 13.0, *)) {
+        view.overrideUserInterfaceStyle = UIUserInterfaceStyleUnspecified;
+        if ([view isKindOfClass:[UIVisualEffectView class]]) {
+            ((UIVisualEffectView *)view).contentView.overrideUserInterfaceStyle = UIUserInterfaceStyleUnspecified;
+        }
+    }
     LGCleanupLockscreenHost(view);
 }
 
@@ -48,6 +63,7 @@ static void LGLockscreenQuickActionsApplyIfNeeded(UIView *view) {
         return;
     }
 
+    LGLockscreenQuickActionsApplyLightAppearance(view);
     LGLockscreenInjectGlassWithSettingsAndMode(view,
                                                @"LockscreenQuickActions.RenderingMode",
                                                LGLockscreenQuickActionsCornerRadius(view),

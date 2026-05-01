@@ -113,7 +113,7 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
     }
 
     CGFloat screenScale = host.window.screen.scale ?: UIScreen.mainScreen.scale ?: 2.0f;
-    CGFloat captureScale = MAX(0.7f, MIN(screenScale, screenScale * 0.5f));
+    CGFloat captureScale = MAX(0.7f, screenScale * 0.5f);
     size_t pixelWidth = MAX((size_t)1, (size_t)lrint(CGRectGetWidth(captureRect) * captureScale));
     size_t pixelHeight = MAX((size_t)1, (size_t)lrint(CGRectGetHeight(captureRect) * captureScale));
 

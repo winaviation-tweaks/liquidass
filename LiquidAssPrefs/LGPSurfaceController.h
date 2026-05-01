@@ -1,6 +1,6 @@
 #import <UIKit/UIKit.h>
 
-@interface LGPSurfaceController : UIViewController <UIScrollViewDelegate>
+@interface LGPSurfaceController : UIViewController <UIScrollViewDelegate, UIDocumentPickerDelegate>
 
 - (instancetype)initWithTitle:(NSString *)title
                      subtitle:(NSString *)subtitle

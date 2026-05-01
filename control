@@ -1,9 +1,10 @@
 Package: dylv.liquidass
 Name: Liquid (Gl)ass
-Version: 7.2.alpha
+Version: 8.alpha
 Architecture: iphoneos-arm
-Description: ass
+Description: next level diarrhea
 Maintainer: dylv
 Author: dylv
 Section: Tweaks
 Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 14.0), preferenceloader
+Icon: https://winaviation.github.io/repo/depictions/dylv.liquidass/icon.png

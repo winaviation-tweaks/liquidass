@@ -2,7 +2,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = LiquidAssPrefs
 
-PREF_SHARED_FILES := $(filter-out ../Shared/LGBannerCaptureSupport.m,$(wildcard ../Shared/*.m))
+PREF_SHARED_FILES := $(wildcard ../Shared/*.m)
 PREF_RUNTIME_FILES := $(wildcard ../Runtime/*.m)
 PREF_LOCAL_FILES := LGPRootListController.m LGPSurfaceController.m LGPrefsDataSupport.m LGPrefsUIHelpers.m
 LiquidAssPrefs_FILES = $(PREF_LOCAL_FILES) $(PREF_SHARED_FILES) $(PREF_RUNTIME_FILES)

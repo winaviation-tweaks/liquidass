@@ -24,6 +24,10 @@ static BOOL LGBannerEnabled(void) {
     return LG_globalEnabled() && LG_prefBool(@"Banner.Enabled", YES);
 }
 
+static BOOL LGNotificationGlassEnabled(void) {
+    return LGLockscreenEnabled();
+}
+
 static NSHashTable<UIView *> *LGBannerHostRegistry(void) {
     if (!sBannerHosts) {
         sBannerHosts = [NSHashTable weakObjectsHashTable];
@@ -454,7 +458,6 @@ void LGLockscreenRefreshAllHosts(void) {
         LGDetachLockHostIfNeeded(self_);
         return;
     }
-    if (!LGLockscreenEnabled()) return;
 
     if (isPrimaryPlatterMaterialHost(self_)) {
 #if LG_DEBUG_VERBOSE
@@ -465,12 +468,20 @@ void LGLockscreenRefreshAllHosts(void) {
             if (LGBannerEnabled()) LGAttachBannerHostIfNeeded(self_);
             else LGDetachBannerHostIfNeeded(self_);
         } else {
-            LGLockscreenInjectGlass(self_, LGLockscreenCornerRadius());
-            LGAttachLockHostIfNeeded(self_);
+            if (LGNotificationGlassEnabled()) {
+                LGLockscreenInjectGlass(self_, LGLockscreenCornerRadius());
+                LGAttachLockHostIfNeeded(self_);
+            } else {
+                LGCleanupLockscreenHost(self_);
+            }
         }
     } else if (isPrimaryActionButtonMaterialHost(self_)) {
-        LGLockscreenInjectGlass(self_, LGNotificationActionButtonCornerRadius(self_));
-        LGAttachLockHostIfNeeded(self_);
+        if (LGNotificationGlassEnabled()) {
+            LGLockscreenInjectGlass(self_, LGNotificationActionButtonCornerRadius(self_));
+            LGAttachLockHostIfNeeded(self_);
+        } else {
+            LGCleanupLockscreenHost(self_);
+        }
     } else {
         return;
     }
@@ -490,14 +501,22 @@ void LGLockscreenRefreshAllHosts(void) {
             if (LGBannerEnabled()) LGAttachBannerHostIfNeeded(self_);
             else LGDetachBannerHostIfNeeded(self_);
         } else {
-            LGLockscreenInjectGlass(self_, LGLockscreenCornerRadius());
-            LGAttachLockHostIfNeeded(self_);
+            if (LGNotificationGlassEnabled()) {
+                LGLockscreenInjectGlass(self_, LGLockscreenCornerRadius());
+                LGAttachLockHostIfNeeded(self_);
+            } else {
+                LGCleanupLockscreenHost(self_);
+            }
         }
         return;
     }
     if (isPrimaryActionButtonMaterialHost(self_)) {
-        LGLockscreenInjectGlass(self_, LGNotificationActionButtonCornerRadius(self_));
-        LGAttachLockHostIfNeeded(self_);
+        if (LGNotificationGlassEnabled()) {
+            LGLockscreenInjectGlass(self_, LGNotificationActionButtonCornerRadius(self_));
+            LGAttachLockHostIfNeeded(self_);
+        } else {
+            LGCleanupLockscreenHost(self_);
+        }
     }
 }
 

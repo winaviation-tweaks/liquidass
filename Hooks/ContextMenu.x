@@ -19,7 +19,7 @@ static BOOL LGContextMenuColorIsEffectivelyTransparent(UIColor *color) {
 }
 
 LG_ENABLED_BOOL_PREF_FUNC(LGContextMenuEnabled, "ContextMenu.Enabled", YES)
-LG_FLOAT_PREF_FUNC(LGContextMenuCornerRadius, "ContextMenu.CornerRadius", 22.0)
+static CGFloat LGContextMenuCornerRadius(void) { return LGDynamicDefaultFloat(@"ContextMenu.CornerRadius", 22.0); }
 LG_FLOAT_PREF_FUNC(LGContextMenuBezelWidth, "ContextMenu.BezelWidth", 18.0)
 LG_FLOAT_PREF_FUNC(LGContextMenuGlassThickness, "ContextMenu.GlassThickness", 100.0)
 LG_FLOAT_PREF_FUNC(LGContextMenuRefraction, "ContextMenu.RefractionScale", 1.8)
@@ -34,6 +34,7 @@ LG_FLOAT_PREF_FUNC(LGContextMenuIconSpacing, "ContextMenu.IconSpacing", 12.0)
 
 static void LGContextMenuRefreshAllHosts(void);
 static void LGStyleContextMenuListSubviews(UIView *listView);
+static CGFloat LGResolvedContextMenuCornerRadiusForView(UIView *view);
 
 static LGDisplayLinkState sContextMenuDisplayLinkState = {0};
 static void *kCtxContainerAttachedKey  = &kCtxContainerAttachedKey;
@@ -70,6 +71,11 @@ static BOOL LGContextMenuCellContextViewIsStock(UIView *view) {
     return findDescendantMatching(view, ^BOOL(UIView *candidate) {
         return [candidate isKindOfClass:[UIStackView class]];
     }) != nil;
+}
+
+static BOOL LGIsContextMenuCellContentView(UIView *view) {
+    if (!view) return NO;
+    return [NSStringFromClass(view.class) isEqualToString:@"_UIContextMenuCellContentView"];
 }
 
 static BOOL shouldRoundContextMenuSubview(UIView *view) {
@@ -227,6 +233,14 @@ static void rememberContextMenuOriginalCornerStyle(UIView *view) {
                                  kContextMenuOriginalCornerRadiusKey,
                                  @(view.layer.cornerRadius),
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (LGIsContextMenuCellContentView(view)) {
+            CGFloat radius = CGRectGetHeight(view.bounds) * 0.5;
+            if (radius > 0.0) {
+                LGCacheDynamicDefaultFloat(@"ContextMenu.CornerRadius", radius);
+            }
+        } else {
+            LGCacheDynamicDefaultFloat(@"ContextMenu.CornerRadius", view.layer.cornerRadius);
+        }
     }
     if (@available(iOS 13.0, *)) {
         if (!objc_getAssociatedObject(view, kContextMenuOriginalCornerCurveKey)) {
@@ -236,6 +250,28 @@ static void rememberContextMenuOriginalCornerStyle(UIView *view) {
                                      OBJC_ASSOCIATION_COPY_NONATOMIC);
         }
     }
+}
+
+static CGFloat LGResolvedContextMenuCornerRadiusForView(UIView *view) {
+    if (LGHasExplicitPreferenceValue(@"ContextMenu.CornerRadius")) {
+        return LGContextMenuCornerRadius();
+    }
+    if (LGIsContextMenuCellContentView(view)) {
+        CGFloat radius = CGRectGetHeight(view.bounds) * 0.5;
+        if (radius > 0.0) {
+            LGCacheDynamicDefaultFloat(@"ContextMenu.CornerRadius", radius);
+            return radius;
+        }
+    }
+    return LGContextMenuCornerRadius();
+}
+
+static void applyContextMenuRoundedStyle(UIView *view) {
+    if (!view) return;
+    rememberContextMenuOriginalCornerStyle(view);
+    view.layer.cornerRadius = LGResolvedContextMenuCornerRadiusForView(view);
+    if (@available(iOS 13.0, *))
+        view.layer.cornerCurve = kCACornerCurveContinuous;
 }
 
 static void restoreContextMenuOriginalCornerStyle(UIView *view) {
@@ -585,10 +621,7 @@ static void LGStyleContextMenuListSubviews(UIView *listView) {
     LGTraverseViews(listView, ^(UIView *view) {
         if (view == listView) return;
         if (!shouldRoundContextMenuSubview(view)) return;
-        rememberContextMenuOriginalCornerStyle(view);
-        view.layer.cornerRadius = LGContextMenuCornerRadius();
-        if (@available(iOS 13.0, *))
-            view.layer.cornerCurve = kCACornerCurveContinuous;
+        applyContextMenuRoundedStyle(view);
     });
 }
 
@@ -603,10 +636,7 @@ static void LGStyleContextMenuListSubviews(UIView *listView) {
     if ([subview isKindOfClass:[UIView class]]
         && ![subview isKindOfClass:[UIVisualEffectView class]]
         && shouldRoundContextMenuSubview(subview)) {
-        rememberContextMenuOriginalCornerStyle(subview);
-        subview.layer.cornerRadius = LGContextMenuCornerRadius();
-        if (@available(iOS 13.0, *))
-            subview.layer.cornerCurve = kCACornerCurveContinuous;
+        applyContextMenuRoundedStyle(subview);
     }
     LGStyleContextMenuListSubviews((UIView *)self);
 }
@@ -614,6 +644,18 @@ static void LGStyleContextMenuListSubviews(UIView *listView) {
 - (void)layoutSubviews {
     %orig;
     LGStyleContextMenuListSubviews((UIView *)self);
+}
+
+%end
+
+%hook _UIContextMenuCell
+
+- (void)setHighlighted:(BOOL)highlighted {
+    %orig(NO);
+}
+
+- (void)setSelected:(BOOL)selected {
+    %orig(NO);
 }
 
 %end

@@ -2,6 +2,8 @@
 #import "LGSharedSupport.h"
 #import <objc/runtime.h>
 
+static const NSInteger kLGMaxTraverseDepth = 128;
+
 BOOL LGHasAncestorClass(UIView *view, Class cls) {
     if (!view || !cls) return NO;
     UIView *ancestor = view.superview;
@@ -34,9 +36,20 @@ BOOL LGResponderChainContainsClassNamed(UIResponder *responder, NSString *classN
 
 void LGTraverseViews(UIView *root, void (^block)(UIView *view)) {
     if (!root || !block) return;
-    block(root);
-    for (UIView *subview in root.subviews) {
-        LGTraverseViews(subview, block);
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:root];
+    NSMutableArray<NSNumber *> *depths = [NSMutableArray arrayWithObject:@0];
+    while (stack.count > 0) {
+        UIView *view = stack.lastObject;
+        NSInteger depth = depths.lastObject.integerValue;
+        [stack removeLastObject];
+        [depths removeLastObject];
+        block(view);
+        if (depth >= kLGMaxTraverseDepth) continue;
+        NSArray<UIView *> *subviews = view.subviews;
+        for (UIView *subview in subviews.reverseObjectEnumerator) {
+            [stack addObject:subview];
+            [depths addObject:@(depth + 1)];
+        }
     }
 }
 
@@ -139,6 +152,79 @@ void LGRemoveAssociatedSubview(UIView *host, const void *associationKey) {
 
 @end
 
+@interface LGSharedDisplayLinkHub : NSObject
+- (void)tick:(CADisplayLink *)displayLink;
+@end
+
+static CADisplayLink *sSharedDisplayLink = nil;
+static LGSharedDisplayLinkHub *sSharedDisplayLinkHub = nil;
+static NSMutableArray<NSValue *> *sSharedDisplayLinkStates = nil;
+
+static NSInteger LGSharedDisplayLinkMaximumFPS(void) {
+    NSInteger maxFPS = UIScreen.mainScreen.maximumFramesPerSecond;
+    return maxFPS > 0 ? maxFPS : 60;
+}
+
+static void LGStopSharedDisplayLinkIfIdle(void) {
+    if (sSharedDisplayLinkStates.count > 0) return;
+    [sSharedDisplayLink invalidate];
+    sSharedDisplayLink = nil;
+    sSharedDisplayLinkHub = nil;
+}
+
+static void LGReconfigureSharedDisplayLinkFPS(void) {
+    if (!sSharedDisplayLink) return;
+    NSInteger highestFPS = 0;
+    for (NSValue *value in sSharedDisplayLinkStates) {
+        LGDisplayLinkState *state = value.pointerValue;
+        if (!state || state->link != sSharedDisplayLink) continue;
+        highestFPS = MAX(highestFPS, state->preferredFPS);
+    }
+    if (highestFPS <= 0) {
+        [sSharedDisplayLink invalidate];
+        sSharedDisplayLink = nil;
+        sSharedDisplayLinkHub = nil;
+        return;
+    }
+    NSInteger cappedFPS = MIN(MAX(highestFPS, 1), LGSharedDisplayLinkMaximumFPS());
+    if ([sSharedDisplayLink respondsToSelector:@selector(setPreferredFramesPerSecond:)]) {
+        sSharedDisplayLink.preferredFramesPerSecond = cappedFPS;
+    }
+}
+
+@implementation LGSharedDisplayLinkHub
+
+- (void)tick:(CADisplayLink *)displayLink {
+    NSArray<NSValue *> *states = [sSharedDisplayLinkStates copy];
+    for (NSValue *value in states) {
+        LGDisplayLinkState *state = value.pointerValue;
+        if (!state || state->link != sSharedDisplayLink) continue;
+
+        NSInteger preferredFPS = MAX(state->preferredFPS, 1);
+        CFTimeInterval minimumInterval = 1.0 / (CFTimeInterval)preferredFPS;
+        if (state->lastTickTimestamp > 0.0) {
+            CFTimeInterval delta = displayLink.timestamp - state->lastTickTimestamp;
+            if (delta + 0.0005 < minimumInterval) continue;
+        }
+        state->lastTickTimestamp = displayLink.timestamp;
+
+        LGDisplayLinkDriver *driver = state->driver;
+        if (driver) [driver tick:displayLink];
+    }
+}
+
+@end
+
+static void LGEnsureSharedDisplayLink(void) {
+    if (!sSharedDisplayLinkStates) {
+        sSharedDisplayLinkStates = [NSMutableArray array];
+    }
+    if (sSharedDisplayLink) return;
+    sSharedDisplayLinkHub = [LGSharedDisplayLinkHub new];
+    sSharedDisplayLink = [CADisplayLink displayLinkWithTarget:sSharedDisplayLinkHub selector:@selector(tick:)];
+    [sSharedDisplayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+}
+
 void LGStartDisplayLink(CADisplayLink *__strong *linkStorage,
                         id __strong *driverStorage,
                         NSInteger preferredFPS,
@@ -167,11 +253,33 @@ void LGStopDisplayLink(CADisplayLink *__strong *linkStorage,
 void LGStartDisplayLinkState(LGDisplayLinkState *state,
                              NSInteger preferredFPS,
                              dispatch_block_t tickBlock) {
+    LGAssertMainThread();
     if (!state) return;
-    LGStartDisplayLink(&state->link, &state->driver, preferredFPS, tickBlock);
+    if (state->link) return;
+    LGEnsureSharedDisplayLink();
+    LGDisplayLinkDriver *driver = [[LGDisplayLinkDriver alloc] initWithTickBlock:tickBlock];
+    state->driver = driver;
+    state->preferredFPS = MIN(MAX(preferredFPS, 1), LGSharedDisplayLinkMaximumFPS());
+    state->lastTickTimestamp = 0.0;
+    state->link = sSharedDisplayLink;
+    [sSharedDisplayLinkStates addObject:[NSValue valueWithPointer:state]];
+    LGReconfigureSharedDisplayLinkFPS();
 }
 
 void LGStopDisplayLinkState(LGDisplayLinkState *state) {
+    LGAssertMainThread();
     if (!state) return;
-    LGStopDisplayLink(&state->link, &state->driver);
+    if (!state->link) return;
+    for (NSInteger index = sSharedDisplayLinkStates.count - 1; index >= 0; index--) {
+        LGDisplayLinkState *candidate = sSharedDisplayLinkStates[index].pointerValue;
+        if (candidate == state) {
+            [sSharedDisplayLinkStates removeObjectAtIndex:index];
+        }
+    }
+    state->link = nil;
+    state->driver = nil;
+    state->preferredFPS = 0;
+    state->lastTickTimestamp = 0.0;
+    LGReconfigureSharedDisplayLinkFPS();
+    LGStopSharedDisplayLinkIfIdle();
 }

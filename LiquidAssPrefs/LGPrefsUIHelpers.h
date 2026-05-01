@@ -27,9 +27,18 @@ void LGInstallBottomRespringBar(UIViewController *controller, UIView *__strong *
 void LGPresentSliderValuePrompt(UIViewController *controller, UILabel *valueLabel);
 void LGAnimateSliderToDefault(UISlider *slider, CGFloat targetValue, UILabel *valueLabel, NSInteger decimals);
 UIBarButtonItem *LGMakeCircularBackItem(id target, SEL action);
+void LGRefreshCircularBackItem(UIBarButtonItem *item);
 UIBarButtonItem *LGMakeResetTextItem(id target, SEL action);
+UIBarButtonItem *LGMakeTextBarButtonItem(NSString *title, id target, SEL action);
 void LGPresentResetConfirmation(UIViewController *controller);
+void LGPresentResetConfirmationWithBody(UIViewController *controller, NSString *body, SEL resetSelector);
 void LGPresentRespringConfirmation(UIViewController *controller);
 void LGPresentInvalidateCachesConfirmation(UIViewController *controller);
 void LGPresentReopenSettingsConfirmation(UIViewController *controller);
 void LGPresentInfoSheet(UIViewController *controller, NSString *title, NSString *message);
+void LGPresentMultilineTextInputSheet(UIViewController *controller,
+                                      NSString *title,
+                                      NSString *message,
+                                      NSString *initialText,
+                                      NSString *placeholder,
+                                      void (^applyBlock)(NSString *text));

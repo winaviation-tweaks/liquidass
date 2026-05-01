@@ -188,6 +188,26 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
 
 @implementation LGPrefsLiquidSwitch
 
+static CGSize LGSettingsSwitchRestThumbSize(void) {
+    return CGSizeMake(36.0, 24.0);
+}
+
+static CGSize LGSettingsSwitchExpandedThumbSize(void) {
+    return CGSizeMake(54.0, 34.0);
+}
+
+static void LGSettingsSwitchScheduleAutoContract(LGPrefsLiquidSwitch *self_) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self_.pressed) return;
+        self_.pendingTapAutoContract = NO;
+        self_.targetExpansion = 0.0;
+        self_.targetThumbSize = LGSettingsSwitchRestThumbSize();
+        [self_ startDisplayLinkIfNeeded];
+        [self_ refreshGlassBackdrop];
+        [self_ updateVisualsAnimated:YES];
+    });
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (!self) return nil;
@@ -224,7 +244,7 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
     self.clipsToBounds = NO;
     self.renderedProgress = self.isOn ? 1.0 : 0.0;
     self.targetProgress = self.renderedProgress;
-    self.renderedThumbSize = CGSizeMake(36.0, 24.0);
+    self.renderedThumbSize = LGSettingsSwitchRestThumbSize();
     self.targetThumbSize = self.renderedThumbSize;
     self.renderedExpansion = 0.0;
     self.targetExpansion = 0.0;
@@ -311,6 +331,12 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
     [super setOn:on animated:animated];
     self.targetProgress = on ? 1.0 : 0.0;
     [self setFillVisible:on animated:animated];
+    if (animated && !self.pressed && !self.isDragging && !self.pendingTapAutoContract) {
+        self.pendingTapAutoContract = YES;
+        self.targetExpansion = 1.0;
+        self.targetThumbSize = LGSettingsSwitchExpandedThumbSize();
+        LGSettingsSwitchScheduleAutoContract(self);
+    }
     if (!animated) {
         [self syncRenderedStateImmediately];
     } else {
@@ -333,7 +359,7 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
     self.dragStartLocation = location.x;
     self.dragStartThumbCenterX = [self resolvedThumbCenterX];
     self.targetExpansion = 1.0;
-    self.targetThumbSize = CGSizeMake(54.0, 34.0);
+    self.targetThumbSize = LGSettingsSwitchExpandedThumbSize();
     [self startDisplayLinkIfNeeded];
     [self.feedbackGenerator prepare];
     [self refreshGlassBackdrop];
@@ -385,15 +411,15 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
         }
         if (tappedToggle) {
             self.targetExpansion = 1.0;
-            self.targetThumbSize = CGSizeMake(54.0, 34.0);
+            self.targetThumbSize = LGSettingsSwitchExpandedThumbSize();
             self.pendingTapAutoContract = YES;
         } else {
             self.targetExpansion = 0.0;
-            self.targetThumbSize = CGSizeMake(36.0, 24.0);
+            self.targetThumbSize = LGSettingsSwitchRestThumbSize();
         }
     } else {
         self.targetExpansion = 0.0;
-        self.targetThumbSize = CGSizeMake(36.0, 24.0);
+        self.targetThumbSize = LGSettingsSwitchRestThumbSize();
         self.targetProgress = self.isOn ? 1.0 : 0.0;
         [self setFillVisible:self.isOn animated:YES];
         if (self.didToggleDuringDrag || self.dragMoved || self.isDragging) {
@@ -406,15 +432,7 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
     [self refreshGlassBackdrop];
     [self updateVisualsAnimated:YES];
     if (self.pendingTapAutoContract) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (self.pressed) return;
-            self.pendingTapAutoContract = NO;
-            self.targetExpansion = 0.0;
-            self.targetThumbSize = CGSizeMake(36.0, 24.0);
-            [self startDisplayLinkIfNeeded];
-            [self refreshGlassBackdrop];
-            [self updateVisualsAnimated:YES];
-        });
+        LGSettingsSwitchScheduleAutoContract(self);
     }
 }
 
@@ -427,9 +445,41 @@ static UIImage *LGRenderSwitchBackdropImage(CGSize size,
     self.didSendValueChangedDuringDrag = NO;
     self.pendingTapAutoContract = NO;
     self.targetExpansion = 0.0;
-    self.targetThumbSize = CGSizeMake(36.0, 24.0);
+    self.targetThumbSize = LGSettingsSwitchRestThumbSize();
     self.targetProgress = self.isOn ? 1.0 : 0.0;
     [self setFillVisible:self.isOn animated:YES];
+    [self startDisplayLinkIfNeeded];
+    [self refreshGlassBackdrop];
+    [self updateVisualsAnimated:YES];
+}
+
+- (void)lg_beginExternalPress {
+    self.pressed = YES;
+    self.pendingTapAutoContract = NO;
+    self.targetExpansion = 1.0;
+    self.targetThumbSize = LGSettingsSwitchExpandedThumbSize();
+    [self startDisplayLinkIfNeeded];
+    [self.feedbackGenerator prepare];
+    [self refreshGlassBackdrop];
+    [self updateVisualsAnimated:YES];
+}
+
+- (void)lg_endExternalPressForToggle {
+    self.pressed = NO;
+    self.pendingTapAutoContract = YES;
+    self.targetExpansion = 1.0;
+    self.targetThumbSize = LGSettingsSwitchExpandedThumbSize();
+    [self startDisplayLinkIfNeeded];
+    [self refreshGlassBackdrop];
+    [self updateVisualsAnimated:YES];
+    LGSettingsSwitchScheduleAutoContract(self);
+}
+
+- (void)lg_cancelExternalPress {
+    self.pressed = NO;
+    self.pendingTapAutoContract = NO;
+    self.targetExpansion = 0.0;
+    self.targetThumbSize = LGSettingsSwitchRestThumbSize();
     [self startDisplayLinkIfNeeded];
     [self refreshGlassBackdrop];
     [self updateVisualsAnimated:YES];

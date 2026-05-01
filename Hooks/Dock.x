@@ -98,6 +98,14 @@ static LGDockMode LGResolveDockModeForView(UIView *view) {
     return LGDockModeNone;
 }
 
+static NSString *LGDockModeName(LGDockMode mode) {
+    switch (mode) {
+        case LGDockModeRegular: return @"regular";
+        case LGDockModeFloating: return @"floating";
+        default: return @"none";
+    }
+}
+
 static void startDockDisplayLink(void) {
     LGStartDisplayLinkState(&sDockDisplayLinkState, LGPreferredFramesPerSecondForKey(@"Homescreen.FPS", 30), ^{
         if (LG_prefersLiveCapture(@"Dock.RenderingMode")) LGDockRefreshAllHosts();
@@ -187,8 +195,16 @@ static void ensureDockTintOverlay(UIView *host) {
 
 static void removeDockOverlays(UIView *host) {
     if (!host) return;
-    LGRemoveAssociatedSubview(host, kDockTintKey);
     LiquidGlassView *glass = objc_getAssociatedObject(host, kDockGlassKey);
+    UIView *tint = objc_getAssociatedObject(host, kDockTintKey);
+    if (glass || tint) {
+        LGDebugLog(@"dock cleanup host=%@ frame=%@ glass=%d tint=%d",
+                   NSStringFromClass(host.class),
+                   NSStringFromCGRect(host.frame),
+                   glass != nil,
+                   tint != nil);
+    }
+    LGRemoveAssociatedSubview(host, kDockTintKey);
     if (glass) [glass removeFromSuperview];
     objc_setAssociatedObject(host, kDockGlassKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGRemoveLiveBackdropCaptureView(host, kDockBackdropViewKey);
@@ -202,13 +218,27 @@ static void injectIntoDock(UIView *self_) {
     }
     NSNumber *modeNumber = objc_getAssociatedObject(self_, kDockModeKey);
     LGDockMode mode = (LGDockMode)modeNumber.integerValue;
-    if (mode == LGDockModeNone) return;
+    if (mode == LGDockModeNone) {
+        LGDebugLog(@"dock inject skip reason=no-mode host=%@ frame=%@ bounds=%@",
+                   NSStringFromClass(self_.class),
+                   NSStringFromCGRect(self_.frame),
+                   NSStringFromCGRect(self_.bounds));
+        return;
+    }
+    LGDebugLog(@"dock inject begin host=%@ mode=%@ frame=%@ bounds=%@ render=%@",
+               NSStringFromClass(self_.class),
+               LGDockModeName(mode),
+               NSStringFromCGRect(self_.frame),
+               NSStringFromCGRect(self_.bounds),
+               LG_prefString(@"Dock.RenderingMode", LGDefaultRenderingModeForKey(@"Dock.RenderingMode")));
     LGApplyDockHostPaddingIfNeeded(self_, mode);
 
     CGPoint wallpaperOrigin = CGPointZero;
     UIImage *wallpaper = LG_getHomescreenSnapshot(&wallpaperOrigin);
     if (!wallpaper && !LG_prefersLiveCapture(@"Dock.RenderingMode")) {
-        LGDebugLog(@"dock inject bail reason=no-snapshot mode=snapshot");
+        LGDebugLog(@"dock inject bail reason=no-snapshot mode=%@ host=%@",
+                   LGDockModeName(mode),
+                   NSStringFromClass(self_.class));
         if ([objc_getAssociatedObject(self_, kDockRetryKey) boolValue]) return;
         objc_setAssociatedObject(self_, kDockRetryKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
@@ -262,6 +292,14 @@ static void injectIntoDock(UIView *self_) {
     }
     ensureDockTintOverlay(self_);
     objc_setAssociatedObject(self_, kDockRetryKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    LGDebugLog(@"dock inject ok host=%@ mode=%@ frame=%@ glass=%@ radius=%.2f snapshot=%@ origin=%@",
+               NSStringFromClass(self_.class),
+               LGDockModeName(mode),
+               NSStringFromCGRect(self_.frame),
+               NSStringFromCGRect(glass.frame),
+               glass.cornerRadius,
+               wallpaper ? NSStringFromCGSize(wallpaper.size) : @"{0,0}",
+               NSStringFromCGPoint(wallpaperOrigin));
 }
 
 static void LGDockRefreshAllHosts(void) {
@@ -331,15 +369,30 @@ static void LGDockPrefsChanged(CFNotificationCenterRef center,
 
     if (!self_.window) {
         objc_setAssociatedObject(self_, kDockModeKey, nil, OBJC_ASSOCIATION_ASSIGN);
+        LGDebugLog(@"dock host offwindow class=%@ frame=%@",
+                   NSStringFromClass(self_.class),
+                   NSStringFromCGRect(self_.frame));
         return;
     }
 
     LGDockMode mode = LGResolveDockModeForView(self_);
-    if (mode == LGDockModeNone) return;
+    if (mode == LGDockModeNone) {
+        LGDebugLog(@"dock host skip reason=resolve-none class=%@ frame=%@ bounds=%@ super=%@",
+                   NSStringFromClass(self_.class),
+                   NSStringFromCGRect(self_.frame),
+                   NSStringFromCGRect(self_.bounds),
+                   self_.superview ? NSStringFromClass(self_.superview.class) : @"nil");
+        return;
+    }
     objc_setAssociatedObject(self_, kDockModeKey, @(mode), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     self_.backgroundColor       = [UIColor clearColor];
     self_.layer.backgroundColor = nil;
     self_.layer.contents        = nil;
+    LGDebugLog(@"dock host attach class=%@ mode=%@ frame=%@ bounds=%@",
+               NSStringFromClass(self_.class),
+               LGDockModeName(mode),
+               NSStringFromCGRect(self_.frame),
+               NSStringFromCGRect(self_.bounds));
     injectIntoDock(self_);
     ensureDockTintOverlay(self_);
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -372,6 +425,11 @@ static void LGDockPrefsChanged(CFNotificationCenterRef center,
             self_.backgroundColor = [UIColor clearColor];
             self_.layer.backgroundColor = nil;
             self_.layer.contents = nil;
+            LGDebugLog(@"dock host relayout attach class=%@ mode=%@ frame=%@ bounds=%@",
+                       NSStringFromClass(self_.class),
+                       LGDockModeName(mode),
+                       NSStringFromCGRect(self_.frame),
+                       NSStringFromCGRect(self_.bounds));
             injectIntoDock(self_);
             ensureDockTintOverlay(self_);
             if (![objc_getAssociatedObject(self_, kDockAttachedKey) boolValue]) {

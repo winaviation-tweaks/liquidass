@@ -42,6 +42,9 @@ BOOL LG_prefBool(NSString *key, BOOL fallback);
 CGFloat LG_prefFloat(NSString *key, CGFloat fallback);
 NSInteger LG_prefInteger(NSString *key, NSInteger fallback);
 NSString *LG_prefString(NSString *key, NSString *fallback);
+CGFloat LGDynamicDefaultFloat(NSString *key, CGFloat fallback);
+void LGCacheDynamicDefaultFloat(NSString *key, CGFloat value);
+BOOL LGHasExplicitPreferenceValue(NSString *key);
 NSString *LGDefaultRenderingModeForKey(NSString *key);
 BOOL LG_globalEnabled(void);
 BOOL LG_prefersLiveCapture(NSString *key);
@@ -56,6 +59,8 @@ CGColorSpaceRef LGSharedRGBColorSpace(void);
 UIImage *LGNormalizedImageForUpload(UIImage *image);
 NSNumber *LGTextureScaleKey(CGFloat scale);
 NSNumber *LGBlurSettingKey(CGFloat blur);
+NSString *LGImageStableCacheKey(UIImage *image);
+void LGSetImageStableCacheKey(UIImage *image, NSString *cacheKey);
 
 @interface LGTextureCacheEntry : NSObject
 @property (nonatomic, strong) id<MTLTexture> bgTexture;
@@ -80,8 +85,3 @@ id<MTLLibrary> LGCreateGlassLibrary(id<MTLDevice> device, NSError **error);
 id<MTLRenderPipelineState> LGCreateGlassRenderPipeline(id<MTLDevice> device,
                                                        id<MTLLibrary> library,
                                                        NSError **error);
-BOOL LGCreateGlassBlurPipelines(id<MTLDevice> device,
-                                id<MTLLibrary> library,
-                                id<MTLComputePipelineState> __strong *outHorizontal,
-                                id<MTLComputePipelineState> __strong *outVertical,
-                                NSError **error);

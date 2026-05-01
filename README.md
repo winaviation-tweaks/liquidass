@@ -1,12 +1,6 @@
 # Liquid (Gl)ass
 This tweak is incomplete, issues WILL happen.
 
-> ok so ive seen that post where OP used the liquidglasskit to for the liquid glass effects. cool i guess. so i decide to release my incomplete unstable buggy unoptimized liquid glass tweak today, also because i dont have enough free time to develop it fast enough anyways. 
->
-> i am also researching something pretty advanced (true backdrop sampling instead of relying on snapshots) so if the results are great then it will be 90% true to real liquid glass + applicable inside any app.
->
-> contributions to this tweak are welcomed.
-
 ## Applied to
 - folders on the homescreen
 - opened folders
@@ -16,7 +10,7 @@ This tweak is incomplete, issues WILL happen.
 - lockscreen platter views (notifications & music player)
 - quick actions buttons
 - app library
-- settings app switches and sliders (experimental, causes crash with back-navigation)
+- settings app
 - clock
 
 ## Quick explanation on how this tweak works

@@ -27,6 +27,7 @@ BOOL     LG_hasHomescreenWallpaperAsset(void);
 void     LGLog(NSString *format, ...);
 UIImage *LG_getWallpaperImage(CGPoint *outOriginInScreenPts);
 UIImage *LG_getHomescreenSnapshot(CGPoint *outOriginInScreenPts);
+UIImage *LG_getHomescreenIconCompositeSnapshot(CGPoint *outOriginInScreenPts);
 UIImage *LG_getContextMenuSnapshot(void);
 UIImage *LG_getCachedContextMenuSnapshot(void);
 UIImage *LG_getStrictCachedContextMenuSnapshot(void);

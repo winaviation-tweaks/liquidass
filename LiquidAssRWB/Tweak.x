@@ -11,6 +11,19 @@ static CGFloat kMaxWidgetWidth = 140.0;
 static CGFloat kMaxWidgetHeight = 140.0;
 static NSSet<NSString *> *kWidgetBundleIdentifiers = nil;
 
+static NSArray<NSString *> *RWBParseThirdPartyBundleIDs(NSString *rawText) {
+    if (![rawText isKindOfClass:[NSString class]] || rawText.length == 0) return @[];
+    NSMutableOrderedSet<NSString *> *bundleIDs = [NSMutableOrderedSet orderedSet];
+    [[rawText componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] enumerateObjectsUsingBlock:^(NSString *rawLine, NSUInteger idx, BOOL *stop) {
+        (void)idx;
+        (void)stop;
+        NSString *line = [rawLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!line.length) return;
+        [bundleIDs addObject:line];
+    }];
+    return bundleIDs.array;
+}
+
 static void RWBLog(NSString *format, ...) {
     va_list args;
     va_start(args, format);
@@ -36,7 +49,7 @@ static void ReloadPrefs(void) {
     kMaxWidgetWidth = 140.0;
     kMaxWidgetHeight = 140.0;
 
-    kWidgetBundleIdentifiers = [NSSet setWithArray:@[
+    NSMutableOrderedSet<NSString *> *bundleIDs = [NSMutableOrderedSet orderedSetWithArray:@[
         @"com.apple.mobiletimer.WorldClockWidget",
         @"com.apple.mobilecal.CalendarWidgetExtension",
         @"com.apple.mobilemail.MailWidgetExtension",
@@ -53,8 +66,10 @@ static void ReloadPrefs(void) {
         @"com.apple.news.widget",
         @"com.apple.Maps.GeneralMapsWidget"
     ]];
+    [bundleIDs addObjectsFromArray:RWBParseThirdPartyBundleIDs(settings[@"RWB.ThirdPartyBundleIDs"])];
+    kWidgetBundleIdentifiers = [NSSet setWithArray:bundleIDs.array];
 
-    RWBLog(@"reload enabled=%d maxWidth=%.1f maxHeight=%.1f", kIsEnabled, kMaxWidgetWidth, kMaxWidgetHeight);
+    RWBLog(@"reload enabled=%d maxWidth=%.1f maxHeight=%.1f bundleCount=%lu", kIsEnabled, kMaxWidgetWidth, kMaxWidgetHeight, (unsigned long)kWidgetBundleIdentifiers.count);
 }
 
 static void RWBReloadPrefsCallback(CFNotificationCenterRef __unused center,

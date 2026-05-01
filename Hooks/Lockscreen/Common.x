@@ -19,6 +19,7 @@ static UIView *LGLockscreenHostContainer(UIView *host) {
 BOOL LGIsLockscreenQuickActionsHost(UIView *view);
 
 BOOL LGLockscreenEnabled(void) { return LG_globalEnabled() && LG_prefBool(@"Lockscreen.Enabled", YES); }
+static BOOL LGLockscreenQuickActionsFeatureEnabled(void) { return LG_globalEnabled() && LG_prefBool(@"LockscreenQuickActions.Enabled", YES); }
 CGFloat LGLockscreenCornerRadius(void) { return LG_prefFloat(@"Lockscreen.CornerRadius", 18.5); }
 LG_FLOAT_PREF_FUNC(LGLockscreenBezelWidth, "Lockscreen.BezelWidth", 12.0)
 LG_FLOAT_PREF_FUNC(LGLockscreenGlassThickness, "Lockscreen.GlassThickness", 80.0)
@@ -63,7 +64,7 @@ static void LGEnsureLockscreenTintOverlay(UIView *host,
 }
 
 static void LGStartLockDisplayLink(void) {
-    if (!LGLockscreenEnabled()) return;
+    if (!LGLockscreenEnabled() && !LGLockscreenQuickActionsFeatureEnabled()) return;
     LGStartDisplayLinkState(&sLockDisplayLinkState, LGPreferredFramesPerSecondForKey(@"Lockscreen.FPS", 30), ^{
         if (LG_prefersLiveCapture(@"Lockscreen.RenderingMode") ||
             LG_prefersLiveCapture(@"LockscreenQuickActions.RenderingMode")) {
@@ -114,6 +115,9 @@ void LGRemoveLockscreenGlass(UIView *host) {
     if (!container) return;
     LGRemoveAssociatedSubview(container, kLockTintKey);
     LGRemoveLiveBackdropCaptureView(container, kLockBackdropViewKey);
+    if (container != host) {
+        LGRemoveLiveBackdropCaptureView(host, kLockBackdropViewKey);
+    }
     for (UIView *sub in [container.subviews copy]) {
         if ([sub isKindOfClass:[LiquidGlassView class]]) [sub removeFromSuperview];
     }
@@ -263,7 +267,9 @@ void LGLockscreenInjectGlassWithImageAndSettings(UIView *host,
                                                  CGFloat wallpaperScale,
                                                  CGFloat lightTintAlpha,
                                                  CGFloat darkTintAlpha) {
-    if (!LGLockscreenEnabled()) {
+    BOOL quickActionsHost = LGIsLockscreenQuickActionsHost(host);
+    BOOL featureEnabled = quickActionsHost ? LGLockscreenQuickActionsFeatureEnabled() : LGLockscreenEnabled();
+    if (!featureEnabled) {
         LGDebugLog(@"lockscreen inject bail reason=disabled host=%@",
                    host ? NSStringFromClass(host.class) : @"(null)");
         LGCleanupLockscreenHost(host);
@@ -292,10 +298,13 @@ void LGLockscreenInjectGlassWithImageAndSettings(UIView *host,
     if (!glass) return;
 
     UIView *container = LGLockscreenHostContainer(host);
-    NSString *resolvedRenderingModeKey = LGIsLockscreenQuickActionsHost(host)
+    NSString *resolvedRenderingModeKey = quickActionsHost
         ? @"LockscreenQuickActions.RenderingMode"
         : @"Lockscreen.RenderingMode";
-    if (!LGApplyRenderingModeToGlassHost(container ?: host,
+    UIView *renderingHost = (quickActionsHost && [host isKindOfClass:[UIVisualEffectView class]])
+        ? host
+        : (container ?: host);
+    if (!LGApplyRenderingModeToGlassHost(renderingHost,
                                          glass,
                                          resolvedRenderingModeKey,
                                          kLockBackdropViewKey,

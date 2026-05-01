@@ -61,14 +61,17 @@ static NSInteger LG_preferredFPSForUpdateGroup(LGUpdateGroup group) {
 
 static id<MTLDevice>               sDevice;
 static id<MTLRenderPipelineState>  sPipeline;
-static id<MTLComputePipelineState> sBlurHPipeline;
-static id<MTLComputePipelineState> sBlurVPipeline;
-static id<MTLCommandQueue>         sSharedCommandQueue;
-static MTLComputePassDescriptor   *sComputePassDesc;
+static id<MTLCommandQueue>         sCommandQueues[LGUpdateGroupWidgets + 1];
 static NSMapTable *sTextureCache = nil;
+static NSMutableDictionary<NSNumber *, MPSImageGaussianBlur *> *sBlurKernelCache = nil;
 static id<MTLTexture> sOpaqueMaskTexture = nil;
 static dispatch_once_t sRuntimeInitOnce;
-static _Atomic(BOOL) sRuntimeReady = NO;
+static atomic_bool sRuntimeReady = false;
+
+static id<MTLCommandQueue> LGCommandQueueForUpdateGroup(LGUpdateGroup group) {
+    NSInteger index = (group >= LGUpdateGroupAll && group <= LGUpdateGroupWidgets) ? group : LGUpdateGroupAll;
+    return sCommandQueues[index] ?: sCommandQueues[LGUpdateGroupAll];
+}
 
 static BOOL LGEnsureRuntimeReady(void) {
     LGPrewarmPipelines();
@@ -81,6 +84,7 @@ static void LG_clearTextureCache(void) {
 
 void LGClearGlassTextureCache(void) {
     LG_clearTextureCache();
+    [sBlurKernelCache removeAllObjects];
 }
 
 static LGTextureCacheEntry *LG_getCacheForImage(UIImage *image, CGFloat scale) {
@@ -95,6 +99,19 @@ static void LG_setCacheForImage(UIImage *image, CGFloat scale, LGTextureCacheEnt
         [sTextureCache setObject:variants forKey:image];
     }
     variants[LGTextureScaleKey(scale)] = cache;
+}
+
+static MPSImageGaussianBlur *LGGaussianBlurKernelForSigma(float sigma) {
+    if (!sBlurKernelCache) {
+        sBlurKernelCache = [NSMutableDictionary dictionary];
+    }
+    NSNumber *key = LGBlurSettingKey(sigma);
+    MPSImageGaussianBlur *kernel = sBlurKernelCache[key];
+    if (kernel) return kernel;
+    kernel = [[MPSImageGaussianBlur alloc] initWithDevice:sDevice sigma:sigma];
+    kernel.edgeMode = MPSImageEdgeModeClamp;
+    sBlurKernelCache[key] = kernel;
+    return kernel;
 }
 
 void LGPrewarmPipelines(void) {
@@ -118,18 +135,15 @@ void LGPrewarmPipelines(void) {
             return;
         }
 
-        if (!LGCreateGlassBlurPipelines(sDevice, lib, &sBlurHPipeline, &sBlurVPipeline, &err)) {
-            LGLog(@"metal blur pipeline build failed %@", err.localizedDescription ?: @"unknown");
-            return;
-        }
-
-        sSharedCommandQueue = [sDevice newCommandQueue];
-        if (!sSharedCommandQueue) {
+        sCommandQueues[LGUpdateGroupAll] = [sDevice newCommandQueue];
+        if (!sCommandQueues[LGUpdateGroupAll]) {
             LGLog(@"metal command queue creation failed");
             return;
         }
+        for (NSInteger group = LGUpdateGroupDock; group <= LGUpdateGroupWidgets; group++) {
+            sCommandQueues[group] = [sDevice newCommandQueue] ?: sCommandQueues[LGUpdateGroupAll];
+        }
 
-        sComputePassDesc = [MTLComputePassDescriptor computePassDescriptor];
         LG_clearTextureCache();
 
         MTLTextureDescriptor *maskDesc =
@@ -147,7 +161,7 @@ void LGPrewarmPipelines(void) {
                                   bytesPerRow:sizeof(pixel)];
         }
 
-        atomic_store_explicit(&sRuntimeReady, YES, memory_order_release);
+        atomic_store_explicit(&sRuntimeReady, true, memory_order_release);
     });
 }
 
@@ -661,8 +675,7 @@ void LGPrewarmPipelines(void) {
     }
 
     float sigma = MAX(radius * 0.5f, 0.1f);
-    MPSImageGaussianBlur *blur = [[MPSImageGaussianBlur alloc] initWithDevice:sDevice sigma:sigma];
-    blur.edgeMode = MPSImageEdgeModeClamp;
+    MPSImageGaussianBlur *blur = LGGaussianBlurKernelForSigma(sigma);
     [blur encodeToCommandBuffer:cmdBuf sourceTexture:_bgTexture destinationTexture:_blurredTexture];
 }
 
@@ -691,7 +704,8 @@ void LGPrewarmPipelines(void) {
     id<CAMetalDrawable> drawable = view.currentDrawable;
     MTLRenderPassDescriptor *passDesc = view.currentRenderPassDescriptor;
     if (!drawable || !passDesc) return;
-    id<MTLCommandBuffer> cmdBuf = [sSharedCommandQueue commandBuffer];
+    id<MTLCommandQueue> commandQueue = LGCommandQueueForUpdateGroup(_updateGroup);
+    id<MTLCommandBuffer> cmdBuf = [commandQueue commandBuffer];
     if (!cmdBuf) return;
 
     CGFloat scale = UIScreen.mainScreen.scale;
@@ -768,7 +782,6 @@ void LGPrewarmPipelines(void) {
         .hasShapeMask = _shapeMaskTexture ? 1.0f : 0.0f,
     };
     [enc setRenderPipelineState:sPipeline];
-    [enc setVertexBytes:&u length:sizeof(u) atIndex:0];
     [enc setFragmentBytes:&u length:sizeof(u) atIndex:0];
     [enc setFragmentTexture:_blurredTexture atIndex:0];
     [enc setFragmentTexture:(_shapeMaskTexture ?: sOpaqueMaskTexture) atIndex:1];

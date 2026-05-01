@@ -3,12 +3,13 @@
 
 BOOL LGDrawViewHierarchyIntoCurrentContext(UIView *view, CGRect drawRect, BOOL afterUpdates) {
     if (!view) return NO;
-    BOOL ok = [view drawViewHierarchyInRect:drawRect afterScreenUpdates:afterUpdates];
-    if (!ok && !afterUpdates) {
+    BOOL didDrawHierarchy = [view drawViewHierarchyInRect:drawRect afterScreenUpdates:afterUpdates];
+    BOOL usedLayerFallback = NO;
+    if (!didDrawHierarchy && !afterUpdates) {
         [view.layer renderInContext:UIGraphicsGetCurrentContext()];
-        return YES;
+        usedLayerFallback = YES;
     }
-    return ok;
+    return didDrawHierarchy || usedLayerFallback;
 }
 
 UIImage *LGCaptureViewHierarchySnapshot(UIView *view, CGRect drawRect, CGSize canvasSize, CGFloat scale, BOOL afterUpdates) {

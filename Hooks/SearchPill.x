@@ -32,14 +32,16 @@ static BOOL LGIsHomescreenSearchPillMaterialView(UIView *view) {
 }
 
 static CGFloat LGSearchPillCornerRadius(void) {
-    return LG_prefFloat(@"SearchPill.CornerRadius", 15.0);
+    return LGDynamicDefaultFloat(@"SearchPill.CornerRadius", 15.0);
 }
 
 static void LGSearchPillRememberOriginalState(UIView *view) {
     if (!objc_getAssociatedObject(view, kSearchPillOriginalAlphaKey))
         objc_setAssociatedObject(view, kSearchPillOriginalAlphaKey, @(view.alpha), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if (!objc_getAssociatedObject(view, kSearchPillOriginalCornerRadiusKey))
+    if (!objc_getAssociatedObject(view, kSearchPillOriginalCornerRadiusKey)) {
         objc_setAssociatedObject(view, kSearchPillOriginalCornerRadiusKey, @(view.layer.cornerRadius), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        LGCacheDynamicDefaultFloat(@"SearchPill.CornerRadius", view.layer.cornerRadius);
+    }
     if (!objc_getAssociatedObject(view, kSearchPillOriginalClipsKey))
         objc_setAssociatedObject(view, kSearchPillOriginalClipsKey, @(view.clipsToBounds), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
