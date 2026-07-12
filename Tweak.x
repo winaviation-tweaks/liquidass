@@ -37,7 +37,7 @@ static BOOL LG_isAtLeastiOS16(void);
 static CGSize LG_activeScreenSize(void);
 static CGRect LG_activeScreenCoordinateBounds(void);
 static CFStringRef const LGInvalidateSnapshotCachesNotification = CFSTR("love.litten.liquidass/InvalidateSnapshotCaches");
-static const size_t kLGBlackImageSampleGrid = 5;
+enum { kLGBlackImageSampleGrid = 5 };
 void LGRefreshLockSnapshotAfterDelay(NSTimeInterval delay);
 
 typedef NS_OPTIONS(NSUInteger, SBSRelaunchActionOptions) {
@@ -1065,7 +1065,7 @@ BOOL LG_imageIsLight(UIImage *img) {
     CGImageRef cg = img.CGImage;
     if (!cg) return NO;
 
-    const size_t grid = 16;
+    enum { grid = 16 };
     unsigned char px[grid * grid * 4] = {0};
     CGContextRef ctx = CGBitmapContextCreate(px,
                                              grid,
