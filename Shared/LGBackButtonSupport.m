@@ -1,5 +1,6 @@
 #import "LGBackButtonSupport.h"
 #import "LGBannerCaptureSupport.h"
+#import "LGGlassMaterialView.h"
 #import "LGGlassRenderer.h"
 #import "LGHookSupport.h"
 #import <QuartzCore/QuartzCore.h>
@@ -192,6 +193,7 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
 
 @interface LGSharedBackButtonView ()
 @property (nonatomic, strong) LGSharedGlassView *glassView;
+@property (nonatomic, strong) LGGlassMaterialView *materialView;
 @property (nonatomic, strong) UIView *blurView;
 @property (nonatomic, strong) UIView *tintView;
 @property (nonatomic, strong) UIButton *button;
@@ -306,6 +308,8 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
 - (void)layoutSubviews {
     [super layoutSubviews];
     CGFloat side = CGRectGetHeight(self.bounds);
+    self.materialView.frame = self.bounds;
+    self.materialView.cornerRadius = side * 0.5;
     self.glassView.frame = self.bounds;
     self.glassView.cornerRadius = side * 0.5;
     self.blurView.frame = self.bounds;
@@ -324,13 +328,14 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
     if (_glassEnabled == glassEnabled) return;
     _glassEnabled = glassEnabled;
     BOOL liveReady = [objc_getAssociatedObject(self, kLGBackButtonLiveStateKey) boolValue];
-    self.glassView.hidden = !glassEnabled || !liveReady;
-    self.blurView.hidden = glassEnabled && liveReady;
+    self.glassView.hidden = self.materialView != nil || !glassEnabled || !liveReady;
+    self.blurView.hidden = self.materialView != nil || (glassEnabled && liveReady);
     LGApplyLowBlurRadiusToView(self.blurView);
     if (!glassEnabled) {
         objc_setAssociatedObject(self, kLGBackButtonLiveStateKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(self, kLGBackButtonLastRefreshTimeKey, nil, OBJC_ASSOCIATION_ASSIGN);
         [self cleanupBackdropCapture];
+        [self lg_removeServerMaterial];
     } else {
         [self scheduleBackdropWarmupRefresh];
     }
@@ -398,9 +403,36 @@ UIView *LGBackButtonPreferredContainerView(UIView *view) {
     LGRemoveLiveBackdropCaptureView(self, kLGBackButtonBackdropViewKey);
 }
 
+- (void)lg_ensureServerMaterial {
+    if (!self.materialView) {
+        LGGlassMaterialView *material = [[LGGlassMaterialView alloc] initWithFrame:self.bounds];
+        material.blur = self.glassView.blur;
+        material.rimWidth = 2.0;
+        [self insertSubview:material atIndex:0];
+        self.materialView = material;
+        [self cleanupBackdropCapture];
+    }
+    self.materialView.frame = self.bounds;
+    self.materialView.cornerRadius = CGRectGetHeight(self.bounds) * 0.5;
+    self.glassView.hidden = YES;
+    self.blurView.hidden = YES;
+}
+
+- (void)lg_removeServerMaterial {
+    if (!self.materialView) return;
+    [self.materialView removeFromSuperview];
+    self.materialView = nil;
+}
+
 - (void)refreshBackdropAfterScreenUpdates:(BOOL)afterScreenUpdates force:(BOOL)force {
     if (!self.isGlassEnabled) return;
     if (!self.window || CGRectIsEmpty(self.bounds)) return;
+
+    if (LG_serverMaterialAvailable()) {
+        [self lg_ensureServerMaterial];
+        return;
+    }
+    [self lg_removeServerMaterial];
 
     CFTimeInterval now = CACurrentMediaTime();
     NSNumber *lastRefresh = objc_getAssociatedObject(self, kLGBackButtonLastRefreshTimeKey);

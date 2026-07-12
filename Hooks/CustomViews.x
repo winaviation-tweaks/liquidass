@@ -274,6 +274,7 @@ static void LGCustomViewRemove(UIView *host) {
     LGCustomViewDetachHostIfNeeded(host);
     LGRemoveAssociatedSubview(host, kLGCustomViewTintKey);
     LiquidGlassView *glass = objc_getAssociatedObject(host, kLGCustomViewGlassKey);
+    LGRemoveServerMaterialForHost(host, glass);
     if (glass) [glass removeFromSuperview];
     objc_setAssociatedObject(host, kLGCustomViewGlassKey, nil, OBJC_ASSOCIATION_ASSIGN);
     LGRemoveLiveBackdropCaptureView(host, kLGCustomViewBackdropKey);
@@ -309,6 +310,7 @@ static void LGCustomViewApply(UIView *host) {
     NSString *renderingModeKey = LGCustomViewRuleKey(rule, @"RenderingMode");
     NSString *renderingMode = LG_prefString(renderingModeKey, LGDefaultRenderingModeForKey(renderingModeKey));
     BOOL prefersLiveCapture = [renderingMode isEqualToString:LGRenderingModeLiveCapture];
+    BOOL prefersServer = [renderingMode isEqualToString:LGRenderingModeServer] && LG_serverMaterialAvailable();
 
     LiquidGlassView *glass = objc_getAssociatedObject(host, kLGCustomViewGlassKey);
     BOOL hadGlass = glass != nil;
@@ -321,7 +323,7 @@ static void LGCustomViewApply(UIView *host) {
         objc_setAssociatedObject(host, kLGCustomViewGlassKey, glass, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     } else {
         glass.frame = host.bounds;
-        if (!prefersLiveCapture) {
+        if (!prefersLiveCapture && !prefersServer) {
             glass.wallpaperImage = snapshot;
         }
     }
@@ -350,7 +352,19 @@ static void LGCustomViewApply(UIView *host) {
     LGConfigureTintOverlayView(tint, tintColor, cornerRadius, host.layer, YES);
     [host bringSubviewToFront:tint];
 
-    if (prefersLiveCapture) {
+    if (prefersServer) {
+        LGCustomViewDetachHostIfNeeded(host);
+        if (LGApplyRenderingModeToGlassHost(host,
+                                            glass,
+                                            renderingModeKey,
+                                            kLGCustomViewBackdropKey,
+                                            snapshot,
+                                            snapshotOrigin)) {
+            return;
+        }
+        // material unavailable at attach time; fall through to snapshot
+    } else if (prefersLiveCapture) {
+        LGRemoveServerMaterialForHost(host, glass);
         LGCustomViewAttachHostIfNeeded(host);
         CGFloat fps = MAX(1.0, LGCustomViewRuleFloat(rule, @"LiveCaptureFPS", 20.0));
         if (!LGShouldRefreshLiveCaptureForHost(host,
@@ -380,6 +394,7 @@ static void LGCustomViewApply(UIView *host) {
     } else {
         LGCustomViewDetachHostIfNeeded(host);
         LGRemoveLiveBackdropCaptureView(host, kLGCustomViewBackdropKey);
+        LGRemoveServerMaterialForHost(host, glass);
     }
 
     if (snapshot) {

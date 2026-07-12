@@ -33,6 +33,7 @@ FOUNDATION_EXPORT NSString * const LGBannerPresentableControllerClassName;
 FOUNDATION_EXPORT NSString * const LGAppLibrarySidebarMarkerClassName;
 FOUNDATION_EXPORT NSString * const LGRenderingModeSnapshot;
 FOUNDATION_EXPORT NSString * const LGRenderingModeLiveCapture;
+FOUNDATION_EXPORT NSString * const LGRenderingModeServer;
 FOUNDATION_EXPORT NSString * const LGTintOverrideSystem;
 FOUNDATION_EXPORT NSString * const LGTintOverrideLight;
 FOUNDATION_EXPORT NSString * const LGTintOverrideDark;
@@ -48,6 +49,8 @@ BOOL LGHasExplicitPreferenceValue(NSString *key);
 NSString *LGDefaultRenderingModeForKey(NSString *key);
 BOOL LG_globalEnabled(void);
 BOOL LG_prefersLiveCapture(NSString *key);
+BOOL LG_prefersServerMaterial(NSString *key);
+BOOL LG_serverMaterialAvailable(void);
 void LGReloadPreferences(void);
 void LGObservePreferenceChanges(dispatch_block_t block);
 

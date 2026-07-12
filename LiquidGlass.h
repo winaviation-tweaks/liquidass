@@ -47,6 +47,7 @@ void     LG_invalidateFolderSnapshot(void);
 void     LG_refreshHomescreenSnapshot(void);
 void     LGInvalidateLockscreenSnapshotCache(void);
 BOOL     LG_isLockscreenWallpaperLight(void);
+CGFloat  LG_currentSpecularMotionAngle(void);
 
 @interface LiquidGlassView : UIView <MTKViewDelegate>
 

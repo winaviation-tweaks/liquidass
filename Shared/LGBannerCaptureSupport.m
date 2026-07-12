@@ -1,6 +1,7 @@
 #import "LGBannerCaptureSupport.h"
 #import "../LiquidGlass.h"
 #import "../Runtime/LGSnapshotCaptureSupport.h"
+#import "LGGlassMaterialView.h"
 #import "LGSharedSupport.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
@@ -19,9 +20,10 @@
     CALayer *layer = self.layer;
     if (!backdropCls || ![layer isKindOfClass:backdropCls]) return;
     @try {
-        [layer setValue:@NO forKey:@"layerUsesCoreImageFilters"];
-        [layer setValue:@YES forKey:@"windowServerAware"];
-        [layer setValue:NSUUID.UUID.UUIDString forKey:@"groupName"];
+        // One shared group for every capture view: the render server dedupes
+        // backdrop captures by groupName, so unique-per-view names would give
+        // each capture its own server-side BackdropGroup for no benefit.
+        [layer setValue:@"liquidass.live_capture" forKey:@"groupName"];
     } @catch (NSException *exception) {
         LGDebugLog(@"banner backdrop layer configuration failed %@ %@", exception.name, exception.reason);
     }
@@ -201,6 +203,59 @@ BOOL LGCaptureLiveBackdropTextureForHost(UIView *host,
     return YES;
 }
 
+static void *kLGServerMaterialViewKey = &kLGServerMaterialViewKey;
+
+void LGRemoveServerMaterialForHost(UIView *host, LiquidGlassView *glass) {
+    LGAssertMainThread();
+    if (!host) return;
+    LGGlassMaterialView *material = objc_getAssociatedObject(host, kLGServerMaterialViewKey);
+    if (!material) return;
+    [material removeFromSuperview];
+    objc_setAssociatedObject(host, kLGServerMaterialViewKey, nil, OBJC_ASSOCIATION_ASSIGN);
+    glass.hidden = NO;
+}
+
+static LGGlassMaterialView *LGAttachServerMaterialForGlass(UIView *host, LiquidGlassView *glass) {
+    if (![LGGlassMaterialView isSupported]) return nil;
+    UIView *superview = glass.superview ?: host;
+    if (!superview) return nil;
+
+    LGGlassMaterialView *material = objc_getAssociatedObject(host, kLGServerMaterialViewKey);
+    if (!material) {
+        material = [[LGGlassMaterialView alloc] initWithFrame:glass.frame];
+        material.autoresizingMask = glass.autoresizingMask;
+        material.userInteractionEnabled = NO;
+        objc_setAssociatedObject(host, kLGServerMaterialViewKey, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    if (material.superview != superview) {
+        if (glass.superview == superview) {
+            [superview insertSubview:material belowSubview:glass];
+        } else {
+            [superview addSubview:material];
+        }
+    }
+    material.frame = glass.frame;
+    material.cornerRadius = glass.cornerRadius;
+    material.blur = glass.blur;
+    // glass.specularOpacity is tuned for the Metal shader's rim specular;
+    // the material's full-face sheen needs far less and defaults to off.
+    material.specularOpacity = LG_prefFloat(@"ServerMaterial.SpecularOpacity", 0.0);
+    material.shapeMaskImage = glass.shapeMaskImage;
+    material.updateGroup = glass.updateGroup;
+    material.saturation = LG_prefFloat(@"ServerMaterial.Saturation", 1.6);
+    material.brightness = LG_prefFloat(@"ServerMaterial.Brightness", 0.0);
+    material.rimWidth = LG_prefFloat(@"ServerMaterial.RimWidth", 3.0);
+    NSString *rimMode = LG_prefString(@"ServerMaterial.RimMode", @"gradient");
+    material.rimMode = [rimMode isEqualToString:@"zoom"] ? LGGlassRimModeZoom
+                     : [rimMode isEqualToString:@"none"] ? LGGlassRimModeNone
+                     : LGGlassRimModeGradient;
+
+    // The hidden MTKView stays as the mode-switch fallback; its draw and
+    // updateOrigin paths early-out while hidden.
+    glass.hidden = YES;
+    return material;
+}
+
 BOOL LGApplyRenderingModeToGlassHost(UIView *host,
                                      LiquidGlassView *glass,
                                      NSString *renderingModeKey,
@@ -217,11 +272,30 @@ BOOL LGApplyRenderingModeToGlassHost(UIView *host,
 
     NSString *resolvedMode = LG_prefString(renderingModeKey, LGDefaultRenderingModeForKey(renderingModeKey));
     BOOL prefersLiveCapture = [resolvedMode isEqualToString:LGRenderingModeLiveCapture];
+    BOOL prefersServer = [resolvedMode isEqualToString:LGRenderingModeServer] && LG_serverMaterialAvailable();
     LGDebugLog(@"rendering mode resolve key=%@ mode=%@ host=%@ snapshot=%d",
                renderingModeKey,
                resolvedMode,
                NSStringFromClass(host.class),
                snapshot ? 1 : 0);
+
+    if (prefersServer) {
+        LGRemoveLiveBackdropCaptureView(host, associationKey);
+        LGGlassMaterialView *material = LGAttachServerMaterialForGlass(host, glass);
+        if (material) {
+            LGDebugLog(@"rendering mode server ok key=%@ host=%@ group=%@",
+                       renderingModeKey,
+                       NSStringFromClass(host.class),
+                       @(material.updateGroup));
+            return YES;
+        }
+        LGDebugLog(@"rendering mode server bail key=%@ host=%@ fallback=snapshot",
+                   renderingModeKey,
+                   NSStringFromClass(host.class));
+        // fall through to the snapshot path below
+    } else {
+        LGRemoveServerMaterialForHost(host, glass);
+    }
 
     if (prefersLiveCapture) {
         CGPoint captureOrigin = CGPointZero;

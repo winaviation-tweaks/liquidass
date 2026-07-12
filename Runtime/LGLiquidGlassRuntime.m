@@ -1,5 +1,6 @@
 #import "LGLiquidGlassRuntime.h"
 #import "../Shared/LGBackButtonSupport.h"
+#import "../Shared/LGGlassMaterialView.h"
 #import "../Shared/LGSharedSupport.h"
 #import <CoreLocation/CoreLocation.h>
 #import <CoreMotion/CoreMotion.h>
@@ -94,6 +95,10 @@ static CGFloat LGSpecularMotionSensitivity(void) {
 
 static CGFloat LGSpecularMotionCurrentAngle(void) {
     return LGSpecularMotionEnabled() ? sSpecularMotionAngle : 0.0;
+}
+
+CGFloat LG_currentSpecularMotionAngle(void) {
+    return LGSpecularMotionCurrentAngle();
 }
 
 
@@ -264,6 +269,7 @@ static void LGSpecularMotionConfigure(void) {
         if (willRedraw) {
             sSpecularMotionLastRedraw = now;
             LG_redrawRegisteredGlassViews(LGUpdateGroupAll);
+            [LGGlassMaterialView updateAllSpecularAngles:sSpecularMotionAngle];
         }
 
         CMMotionManager *manager = weakManager;

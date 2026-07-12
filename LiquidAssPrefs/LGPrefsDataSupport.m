@@ -453,15 +453,23 @@ NSDictionary *LGGlassEnabledSetting(NSString *key, BOOL fallback) {
     return [item copy];
 }
 
+static NSArray<NSDictionary *> *LGRenderingModeOptions(void) {
+    NSMutableArray *options = [NSMutableArray arrayWithObjects:
+        @{@"value": LGRenderingModeSnapshot, @"title": LGLocalized(@"prefs.rendering.snapshot.title")},
+        @{@"value": LGRenderingModeLiveCapture, @"title": LGLocalized(@"prefs.rendering.live_capture.title")},
+        nil];
+    if (LG_serverMaterialAvailable()) {
+        [options addObject:@{@"value": LGRenderingModeServer, @"title": LGLocalized(@"prefs.rendering.server.title")}];
+    }
+    return options;
+}
+
 NSDictionary *LGGlassRenderingModeSetting(NSString *key) {
     return LGMenuSetting(key,
                          LGLocalized(@"prefs.control.rendering_method"),
                          LGLocalized(@"prefs.subtitle.rendering_method"),
                          LGRenderingModeSnapshot,
-                         @[
-                             @{@"value": LGRenderingModeSnapshot, @"title": LGLocalized(@"prefs.rendering.snapshot.title")},
-                             @{@"value": LGRenderingModeLiveCapture, @"title": LGLocalized(@"prefs.rendering.live_capture.title")}
-                         ]);
+                         LGRenderingModeOptions());
 }
 
 NSDictionary *LGGlassRenderingModeSettingWithFallback(NSString *key, NSString *fallback) {
@@ -469,10 +477,7 @@ NSDictionary *LGGlassRenderingModeSettingWithFallback(NSString *key, NSString *f
                          LGLocalized(@"prefs.control.rendering_method"),
                          LGLocalized(@"prefs.subtitle.rendering_method"),
                          fallback ?: LGRenderingModeSnapshot,
-                         @[
-                             @{@"value": LGRenderingModeSnapshot, @"title": LGLocalized(@"prefs.rendering.snapshot.title")},
-                             @{@"value": LGRenderingModeLiveCapture, @"title": LGLocalized(@"prefs.rendering.live_capture.title")}
-                         ]);
+                         LGRenderingModeOptions());
 }
 
 static const CGFloat kLGUniversalBezelMax = 50.0f;

@@ -28,6 +28,7 @@ NSString * const LGBannerPresentableControllerClassName = @"SBNotificationPresen
 NSString * const LGAppLibrarySidebarMarkerClassName = @"_SBHLibraryFrozenSafeAreaInsetsView";
 NSString * const LGRenderingModeSnapshot = @"snapshot";
 NSString * const LGRenderingModeLiveCapture = @"live_capture";
+NSString * const LGRenderingModeServer = @"server";
 NSString * const LGTintOverrideSystem = @"system";
 NSString * const LGTintOverrideLight = @"light";
 NSString * const LGTintOverrideDark = @"dark";
@@ -546,7 +547,9 @@ NSString *LGDefaultRenderingModeForKey(NSString *key) {
     if ([key isEqualToString:@"Banner.RenderingMode"] ||
         [key isEqualToString:@"ControlCenter.RenderingMode"] ||
         ([key hasPrefix:@"CustomViews.Rule."] && [key hasSuffix:@".RenderingMode"])) {
-        return LGRenderingModeLiveCapture;
+        // Dynamic backgrounds: prefer the render-server material over the
+        // per-frame capture pipeline whenever the CA private API is present.
+        return LG_serverMaterialAvailable() ? LGRenderingModeServer : LGRenderingModeLiveCapture;
     }
     return LGRenderingModeSnapshot;
 }
@@ -557,6 +560,21 @@ BOOL LG_globalEnabled(void) {
 
 BOOL LG_prefersLiveCapture(NSString *key) {
     return [LG_prefString(key, LGDefaultRenderingModeForKey(key)) isEqualToString:LGRenderingModeLiveCapture];
+}
+
+BOOL LG_serverMaterialAvailable(void) {
+    static BOOL classesPresent;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        classesPresent = NSClassFromString(@"CABackdropLayer") != nil &&
+                         NSClassFromString(@"CAFilter") != nil;
+    });
+    return classesPresent && LG_prefBool(@"ServerMaterial.Enabled", YES);
+}
+
+BOOL LG_prefersServerMaterial(NSString *key) {
+    if (!LG_serverMaterialAvailable()) return NO;
+    return [LG_prefString(key, LGDefaultRenderingModeForKey(key)) isEqualToString:LGRenderingModeServer];
 }
 
 void LGLog(NSString *format, ...) {

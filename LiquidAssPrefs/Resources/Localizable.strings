@@ -106,6 +106,7 @@
 
 "prefs.rendering.snapshot.title" = "Snapshot";
 "prefs.rendering.live_capture.title" = "Live Capture";
+"prefs.rendering.server.title" = "Live (Render Server)";
 
 "prefs.section.dock.title" = "Dock";
 "prefs.section.dock.subtitle" = "Dock materials, shape variants, rendering quality, etc.";

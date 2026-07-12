@@ -2,6 +2,7 @@
 #import "LGPrefsDataSupport.h"
 #import "../Shared/LGBackButtonSupport.h"
 #import "../Shared/LGBannerCaptureSupport.h"
+#import "../Shared/LGGlassMaterialView.h"
 #import "../Shared/LGGlassRenderer.h"
 #import "../Shared/LGHookSupport.h"
 #import "../Shared/LGSharedSupport.h"
@@ -66,6 +67,7 @@ static void *kLGRespringBarBlurViewKey = &kLGRespringBarBlurViewKey;
 static void *kLGRespringBarTintViewKey = &kLGRespringBarTintViewKey;
 static void *kLGRespringBarBackdropViewKey = &kLGRespringBarBackdropViewKey;
 static void *kLGRespringBarLiveReadyKey = &kLGRespringBarLiveReadyKey;
+static void *kLGRespringBarMaterialViewKey = &kLGRespringBarMaterialViewKey;
 static NSNumber *LGParseLocalizedDecimalString(NSString *rawText);
 static void LGDismissOverlayPanel(UIView *overlay, UIView *panel);
 
@@ -156,9 +158,29 @@ void LGRefreshRespringBarGlass(UIView *respringBar) {
     if (!glassEnabled) {
         objc_setAssociatedObject(respringBar, kLGRespringBarLiveReadyKey, @NO, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         LGRemoveLiveBackdropCaptureView(respringBar, kLGRespringBarBackdropViewKey);
+        LGGlassMaterialView *material = objc_getAssociatedObject(respringBar, kLGRespringBarMaterialViewKey);
+        [material removeFromSuperview];
+        objc_setAssociatedObject(respringBar, kLGRespringBarMaterialViewKey, nil, OBJC_ASSOCIATION_ASSIGN);
         return;
     }
     if (!respringBar.window || respringBar.hidden || CGRectIsEmpty(respringBar.bounds)) return;
+
+    if (LG_serverMaterialAvailable()) {
+        LGGlassMaterialView *material = objc_getAssociatedObject(respringBar, kLGRespringBarMaterialViewKey);
+        if (!material) {
+            material = [[LGGlassMaterialView alloc] initWithFrame:respringBar.bounds];
+            material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            material.blur = glassView.blur;
+            [respringBar insertSubview:material atIndex:0];
+            objc_setAssociatedObject(respringBar, kLGRespringBarMaterialViewKey, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            LGRemoveLiveBackdropCaptureView(respringBar, kLGRespringBarBackdropViewKey);
+        }
+        material.frame = respringBar.bounds;
+        material.cornerRadius = glassView.cornerRadius;
+        glassView.hidden = YES;
+        blurView.hidden = YES;
+        return;
+    }
 
     CGPoint captureOrigin = CGPointZero;
     CGSize samplingResolution = CGSizeZero;
