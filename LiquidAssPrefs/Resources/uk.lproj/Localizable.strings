@@ -144,7 +144,7 @@
 "prefs.surface.group.lock.subtitle" = "Поверхні, які відображаються до розблокування пристрою.";
 "prefs.surface.group.library.title" = "Бібліотека програм";
 "prefs.surface.group.library.subtitle" = "Поверхні під час перегляду Бібліотеки програм.";
-"prefs.surface.group.system.title" = "Системний ІК";
+"prefs.surface.group.system.title" = "Системний UI";
 "prefs.surface.group.system.subtitle" = "Спільні системні елементи керування у всій системі.";
 "prefs.surface.coversheet.title" = "Центр сповіщень";
 "prefs.surface.keyboard.title" = "Клавіатура";
