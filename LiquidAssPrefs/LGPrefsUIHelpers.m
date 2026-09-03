@@ -67,6 +67,15 @@ static void *kLGRespringBarTintViewKey = &kLGRespringBarTintViewKey;
 static NSNumber *LGParseLocalizedDecimalString(NSString *rawText);
 static void LGDismissOverlayPanel(UIView *overlay, UIView *panel);
 
+static void LGPerformSoftHaptic(void) {
+    if (@available(iOS 13.0, *)) {
+        UIImpactFeedbackGenerator *generator =
+            [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleSoft];
+        [generator prepare];
+        [generator impactOccurred];
+    }
+}
+
 @interface LGLiveGlassBarButton : UIView
 - (instancetype)initWithTarget:(id)target action:(SEL)action symbolName:(NSString *)symbolName;
 - (void)setPrimaryMenu:(UIMenu *)menu;
@@ -99,8 +108,6 @@ static void LGDismissOverlayPanel(UIView *overlay, UIView *panel);
     _tint.userInteractionEnabled = NO;
     _tint.layer.cornerRadius = 22.0;
     _tint.layer.cornerCurve = kCACornerCurveContinuous;
-    _tint.layer.borderWidth = 0.75;
-    _tint.layer.borderColor = [[UIColor separatorColor] colorWithAlphaComponent:0.16].CGColor;
     _tint.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *trait) {
         return trait.userInterfaceStyle == UIUserInterfaceStyleDark
             ? [UIColor colorWithWhite:1.0 alpha:0.06] : [UIColor colorWithWhite:1.0 alpha:0.12];
@@ -170,7 +177,11 @@ static void LGDismissOverlayPanel(UIView *overlay, UIView *panel);
     }];
     [_pressAnimator startAnimation];
 }
-- (void)setPressed:(id)sender { (void)sender; [self lgAnimatePressed:YES]; }
+- (void)setPressed:(id)sender {
+    (void)sender;
+    LGPerformSoftHaptic();
+    [self lgAnimatePressed:YES];
+}
 - (void)clearPressed:(id)sender { (void)sender; [self lgAnimatePressed:NO]; }
 - (void)refreshGlass { [_glass applyFilters]; }
 @end
@@ -264,7 +275,9 @@ void LGScheduleRespringBarGlassRefresh(UIView *respringBar) {
     });
 }
 
-void LGPresentSliderValuePrompt(UIViewController *controller, UILabel *valueLabel) {
+void LGPresentSliderValuePrompt(UIViewController *controller,
+                                UILabel *valueLabel,
+                                void (^commitBlock)(CGFloat value)) {
     if (![valueLabel isKindOfClass:[UILabel class]]) return;
 
     UISlider *slider = objc_getAssociatedObject(valueLabel, kLGSliderKey);
@@ -298,6 +311,7 @@ void LGPresentSliderValuePrompt(UIViewController *controller, UILabel *valueLabe
         slider.value = sliderValue;
         valueLabel.text = LGFormatSliderValue(rawValue, decimals);
         LGWritePreference(preferenceKey, @(rawValue));
+        if (commitBlock) commitBlock(sliderValue);
     });
 }
 
@@ -1519,15 +1533,15 @@ void LGPresentThirdPartyRWBEditor(UIViewController *controller) {
     });
 }
 
-void LGPresentGlobalControlsExclusionEditor(UIViewController *controller) {
-    NSString *defaults = @"NewTerm\nFilza\nTikTok\nDiscord\ncom.spotify.client";
-    id storedValue = LGReadPreferenceObject(@"GlobalControls.Exclusions", defaults);
+static void LGPresentExclusionEditor(UIViewController *controller,
+                                     NSString *key,
+                                     NSString *title,
+                                     NSString *body,
+                                     NSString *placeholder,
+                                     NSString *defaults) {
+    id storedValue = LGReadPreferenceObject(key, defaults);
     NSString *existing = [storedValue isKindOfClass:NSString.class] ? storedValue : defaults;
-    LGPresentMultilineTextInputSheet(controller,
-                                     LGLocalized(@"prefs.global_controls.exclusions.title"),
-                                     LGLocalized(@"prefs.global_controls.exclusions.body"),
-                                     existing,
-                                     LGLocalized(@"prefs.global_controls.exclusions.placeholder"),
+    LGPresentMultilineTextInputSheet(controller, title, body, existing, placeholder,
                                      ^(NSString *text) {
         NSMutableOrderedSet<NSString *> *entries = [NSMutableOrderedSet orderedSet];
         NSCharacterSet *separators = [NSCharacterSet characterSetWithCharactersInString:@"\n,;"];
@@ -1536,10 +1550,24 @@ void LGPresentGlobalControlsExclusionEditor(UIViewController *controller) {
                 NSCharacterSet.whitespaceAndNewlineCharacterSet];
             if (entry.length) [entries addObject:entry];
         }
-        NSString *normalized = [entries.array componentsJoinedByString:@"\n"];
-
-        LGWritePreferenceObject(@"GlobalControls.Exclusions", normalized);
+        LGWritePreferenceObject(key, [entries.array componentsJoinedByString:@"\n"]);
     });
+}
+
+void LGPresentGlobalControlsExclusionEditor(UIViewController *controller) {
+    LGPresentExclusionEditor(controller, @"GlobalControls.Exclusions",
+                             LGLocalized(@"prefs.global_controls.exclusions.title"),
+                             LGLocalized(@"prefs.global_controls.exclusions.body"),
+                             LGLocalized(@"prefs.global_controls.exclusions.placeholder"),
+                             @"NewTerm\nFilza\nTikTok\nDiscord\ncom.spotify.client");
+}
+
+void LGPresentTabBarExclusionEditor(UIViewController *controller) {
+    LGPresentExclusionEditor(controller, @"TabBar.Exclusions",
+                             LGLocalized(@"prefs.tab_bar.exclusions.title"),
+                             LGLocalized(@"prefs.tab_bar.exclusions.body"),
+                             LGLocalized(@"prefs.tab_bar.exclusions.placeholder"),
+                             @"TikTok\ncom.zhiliaoapp.musically");
 }
 
 void LGPresentPreferencesExport(UIViewController *controller) {
@@ -1562,6 +1590,73 @@ void LGPresentPreferencesExport(UIViewController *controller) {
 
     UIActivityViewController *activityController =
         [[UIActivityViewController alloc] initWithActivityItems:@[exportURL] applicationActivities:nil];
+    UIPopoverPresentationController *popover = activityController.popoverPresentationController;
+    if (popover) {
+        popover.sourceView = controller.view;
+        popover.sourceRect = CGRectMake(CGRectGetMidX(controller.view.bounds),
+                                        CGRectGetMidY(controller.view.bounds), 1.0, 1.0);
+    }
+    [controller presentViewController:activityController animated:YES completion:nil];
+}
+
+static NSURL *LGRawLogExportURL(void) {
+    NSFileManager *manager = NSFileManager.defaultManager;
+    NSArray<NSString *> *candidates = @[
+        @"/var/mobile/Library/Accessibility/liquidglass.log",
+        [NSTemporaryDirectory() stringByAppendingPathComponent:@"liquidglass.log"],
+        @"/tmp/liquidglass.log",
+    ];
+    for (NSString *path in candidates) {
+        if (![manager isReadableFileAtPath:path]) continue;
+        NSNumber *size = [manager attributesOfItemAtPath:path error:nil][NSFileSize];
+        if (size.unsignedLongLongValue == 0) continue;
+
+        NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+        formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+        formatter.dateFormat = @"yyyyMMdd-HHmmss";
+        NSString *name = [NSString stringWithFormat:@"LiquidAss-liquidglass-%@.log",
+                                                    [formatter stringFromDate:NSDate.date]];
+        NSString *destination =
+            [NSTemporaryDirectory() stringByAppendingPathComponent:name];
+        [manager removeItemAtPath:destination error:nil];
+        if ([manager copyItemAtPath:path toPath:destination error:nil])
+            return [NSURL fileURLWithPath:destination];
+        return [NSURL fileURLWithPath:path];
+    }
+    return nil;
+}
+
+void LGPresentDiagnosticsExport(UIViewController *controller) {
+    NSString *directory = @"/var/mobile/Documents";
+    NSFileManager *manager = NSFileManager.defaultManager;
+    NSString *newestPath = nil;
+    NSDate *newestDate = nil;
+    for (NSString *name in [manager contentsOfDirectoryAtPath:directory error:nil]) {
+        if (![name hasPrefix:@"LiquidAss-Diagnostics-"] ||
+            ![name.pathExtension.lowercaseString isEqualToString:@"zip"]) continue;
+        NSString *path = [directory stringByAppendingPathComponent:name];
+        NSDate *date = [manager attributesOfItemAtPath:path error:nil][NSFileModificationDate];
+        if (!newestDate || [date compare:newestDate] == NSOrderedDescending) {
+            newestDate = date;
+            newestPath = path;
+        }
+    }
+    NSURL *archiveURL = newestPath.length ? [NSURL fileURLWithPath:newestPath] : nil;
+    NSURL *rawLogURL = LGRawLogExportURL();
+
+    NSURL *exportURL = (!LGBackboardSafeModeActive() && rawLogURL)
+        ? rawLogURL : archiveURL;
+    if (!exportURL) exportURL = rawLogURL;
+    if (!exportURL) {
+        LGPresentInfoSheet(controller,
+                           LGLocalized(@"prefs.misc.export_logs.title"),
+                           LGLocalized(@"prefs.export_logs.none"));
+        return;
+    }
+
+    UIActivityViewController *activityController = [[UIActivityViewController alloc]
+        initWithActivityItems:@[exportURL]
+        applicationActivities:nil];
     UIPopoverPresentationController *popover = activityController.popoverPresentationController;
     if (popover) {
         popover.sourceView = controller.view;

@@ -1,4 +1,6 @@
 #import <UIKit/UIKit.h>
+#import <CoreText/CoreText.h>
+#import <dlfcn.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import "../Shared/LGLiveBackdropView.h"
@@ -22,16 +24,7 @@
 @end
 
 @interface UIKBRenderer : NSObject
-- (void)renderKeyContents:(id)contents withTraits:(id)traits;
 - (void)renderBackgroundTraits:(id)traits allowCaching:(BOOL)allowCaching;
-@end
-
-@interface UIKBRenderGeometry : NSObject
-- (CGFloat)roundRectRadius;
-@end
-
-@interface UIKBKeyView : UIView
-- (id)keyplane;
 @end
 
 @interface UIKBSplitImageView : UIView
@@ -57,22 +50,9 @@ static const void *kLGKeyboardVisualEffectSuppressingHiddenKey =
 static const void *kLGKeyboardVisualEffectRequestedHiddenKey =
     &kLGKeyboardVisualEffectRequestedHiddenKey;
 static const void *kLGKeyboardBorderKey = &kLGKeyboardBorderKey;
-static const void *kLGKeyboardKeyOriginalRadiusKey =
-    &kLGKeyboardKeyOriginalRadiusKey;
-static const void *kLGKeyboardKeyOriginalMasksKey =
-    &kLGKeyboardKeyOriginalMasksKey;
-static const void *kLGKeyboardGeometryKeycapRadiusKey =
-    &kLGKeyboardGeometryKeycapRadiusKey;
 static NSHashTable<UIView *> *gLGKeyboardBackdrops;
 static NSHashTable<UIView *> *gLGKeyboardVisualEffects;
-static __thread NSUInteger gLGKeyboardAtlasRenderFlags;
-static __thread BOOL gLGKeyboardRenderingActionKey;
-static __thread __unsafe_unretained NSString *gLGKeyboardRenderingActionName;
-static CGFloat gLGKeyboardKeycapRadius;
-static NSUInteger gLGKeyboardActionLogCount;
 static NSUInteger gLGKeyboardBackdropLogCount;
-static NSHashTable *gLGKeyboardRegeneratedKeyplanes;
-static NSHashTable *gLGKeyboardScheduledKeyplanes;
 static NSMutableSet<NSString *> *gLGKeyboardHookedKeyplaneClasses;
 static BOOL gLGKeyboardKeyplaneRefreshScheduled;
 static __thread BOOL gLGKeyboardApplyingKeyplaneBounds;
@@ -108,7 +88,6 @@ static BOOL LGIsRemoteKeyboardWindow(UIWindow *window) {
 }
 
 static id LGKeyboardSendObject(id target, SEL selector);
-static void LGKeyboardSendVoid(id target, SEL selector);
 static void LGKeyboardScheduleKeyplaneRefresh(void);
 
 static id LGActiveKeyboardForScreen(UIScreen *screen) {
@@ -185,37 +164,54 @@ static void LGKeyboardRefreshReportedGeometry(UIScreen *screen) {
 
 static NSString *LGKeyboardCompactFontName(void) {
     static NSString *postScriptName;
+    static CGFontRef compactFont;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
+        NSMutableOrderedSet<NSString *> *candidates =
+            [NSMutableOrderedSet orderedSet];
+        Dl_info info = {0};
+        if (dladdr((const void *)&LGKeyboardCompactFontName, &info) != 0 &&
+            info.dli_fname) {
+            NSString *cursor = [[NSString stringWithUTF8String:info.dli_fname]
+                stringByDeletingLastPathComponent];
+            for (NSUInteger depth = 0; depth < 8 && cursor.length > 1; depth++) {
+                [candidates addObject:[[cursor
+                    stringByAppendingPathComponent:
+                        @"Library/PreferenceBundles/LiquidAssPrefs.bundle"]
+                    stringByAppendingPathComponent:
+                        @"SF-Compact-Display-Regular.otf"]];
+                NSString *parent = [cursor stringByDeletingLastPathComponent];
+                if ([parent isEqualToString:cursor]) break;
+                cursor = parent;
+            }
+        }
+        [candidates addObject:jbroot(
+            @"/Library/PreferenceBundles/LiquidAssPrefs.bundle/SF-Compact-Display-Regular.otf")];
 
-        UIFontDescriptor *descriptor =
-            [UIFontDescriptor preferredFontDescriptorWithTextStyle:
-                @"UICTFontTextStyleCompact"];
-        UIFont *font = descriptor
-            ? [UIFont fontWithDescriptor:descriptor size:0.0] : nil;
-        postScriptName = font.fontName;
-        LGLog(@"[keyboard] compact system font style=%@ descriptor=%@ font=%@",
-              @"UICTFontTextStyleCompact", descriptor,
+        NSString *fontPath;
+        for (NSString *candidate in candidates) {
+            if ([NSFileManager.defaultManager fileExistsAtPath:candidate]) {
+                fontPath = candidate;
+                break;
+            }
+        }
+        NSData *data = fontPath ? [NSData dataWithContentsOfFile:fontPath] : nil;
+        CGDataProviderRef provider = data
+            ? CGDataProviderCreateWithCFData((__bridge CFDataRef)data) : NULL;
+        compactFont = provider ? CGFontCreateWithDataProvider(provider) : NULL;
+        if (provider) CGDataProviderRelease(provider);
+        if (compactFont) {
+            postScriptName = CFBridgingRelease(
+                CGFontCopyPostScriptName(compactFont));
+            CFErrorRef error = NULL;
+            CTFontManagerRegisterGraphicsFont(compactFont, &error);
+            if (error) CFRelease(error);
+        }
+        LGLog(@"[keyboard] compact font path=%@ font=%@",
+              fontPath ?: @"(unavailable)",
               postScriptName ?: @"(unavailable)");
     });
     return postScriptName;
-}
-
-static NSUInteger LGKeyboardRendererFlags(id renderer) {
-    static Ivar renderFlagsIvar;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        renderFlagsIvar =
-            class_getInstanceVariable(NSClassFromString(@"UIKBRenderer"),
-                                      "_renderFlags");
-    });
-    if (!renderFlagsIvar) return 0;
-
-    NSUInteger flags = 0;
-    const uint8_t *bytes =
-        (const uint8_t *)(__bridge const void *)renderer;
-    memcpy(&flags, bytes + ivar_getOffset(renderFlagsIvar), sizeof(flags));
-    return flags;
 }
 
 static id LGKeyboardValue(id object, NSString *key) {
@@ -230,18 +226,6 @@ static id LGKeyboardValue(id object, NSString *key) {
 static id LGKeyboardSendObject(id target, SEL selector) {
     if (!target || ![target respondsToSelector:selector]) return nil;
     return ((id (*)(id, SEL))objc_msgSend)(target, selector);
-}
-
-static void LGKeyboardSendVoid(id target, SEL selector) {
-    if (target && [target respondsToSelector:selector]) {
-        ((void (*)(id, SEL))objc_msgSend)(target, selector);
-    }
-}
-
-static void LGKeyboardSendObjectArgument(id target, SEL selector, id value) {
-    if (target && [target respondsToSelector:selector]) {
-        ((void (*)(id, SEL, id))objc_msgSend)(target, selector, value);
-    }
 }
 
 static UIView *LGKeyboardCurrentKeyplaneView(void) {
@@ -427,89 +411,6 @@ static void LGKeyboardScheduleKeyplaneRefresh(void) {
     });
 }
 
-static void LGRegenerateKeyboardKeyplaneIfNeeded(id keyplaneIdentity) {
-    if (!keyplaneIdentity ||
-        [gLGKeyboardRegeneratedKeyplanes containsObject:keyplaneIdentity] ||
-        [gLGKeyboardScheduledKeyplanes containsObject:keyplaneIdentity]) return;
-    [gLGKeyboardScheduledKeyplanes addObject:keyplaneIdentity];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [gLGKeyboardScheduledKeyplanes removeObject:keyplaneIdentity];
-        if ([gLGKeyboardRegeneratedKeyplanes containsObject:keyplaneIdentity]) return;
-
-        Class implClass = NSClassFromString(@"UIKeyboardImpl");
-        id impl = LGKeyboardSendObject(implClass,
-                                      NSSelectorFromString(@"activeInstance"));
-        if (!impl) {
-            impl = LGKeyboardSendObject(implClass,
-                                        NSSelectorFromString(@"sharedInstance"));
-        }
-        id layout = LGKeyboardSendObject(impl,
-                                         NSSelectorFromString(@"activeLayout"));
-        id keyplane = LGKeyboardSendObject(
-            layout, NSSelectorFromString(@"currentKeyplaneView"));
-        if (!layout || !keyplane) return;
-
-        [gLGKeyboardRegeneratedKeyplanes addObject:keyplaneIdentity];
-
-        if (!lgHostEnabled(@"Keyboard")) gLGKeyboardKeycapRadius = 0.0;
-        LGKeyboardSendVoid(NSClassFromString(@"UIKBRenderer"),
-                           NSSelectorFromString(@"clearInternalCaches"));
-        LGKeyboardSendObjectArgument(layout,
-                                     NSSelectorFromString(@"flushKeyCache:"), nil);
-        LGKeyboardSendObjectArgument(keyplane,
-                                     NSSelectorFromString(@"setCacheToken:"), nil);
-        LGKeyboardSendObjectArgument(
-            keyplane, NSSelectorFromString(@"setDefaultKeyplaneCacheToken:"), nil);
-        LGKeyboardSendVoid(keyplane,
-                           NSSelectorFromString(@"purgeActiveKeyViews"));
-        LGKeyboardSendVoid(keyplane, NSSelectorFromString(@"purgeKeyViews"));
-        LGKeyboardSendVoid(
-            layout, NSSelectorFromString(@"didTriggerDestructiveRenderConfigChange"));
-        LGKeyboardSendVoid(layout,
-                           NSSelectorFromString(@"reloadCurrentKeyplane"));
-        LGKeyboardSendVoid(layout,
-                           NSSelectorFromString(@"updateCachedKeyplaneKeycaps"));
-        LGKeyboardScheduleKeyplaneRefresh();
-        NSString *name = LGKeyboardSendObject(
-            layout, NSSelectorFromString(@"keyplaneName"));
-        LGLog(@"[keyboard] regenerated keyplane=%@ identity=%p mode=%@",
-              name ?: @"(unknown)", keyplaneIdentity,
-              lgHostEnabled(@"Keyboard") ? @"rounded" : @"stock");
-    });
-}
-
-static void LGUpdateKeyboardKeyCorner(UIView *keyView) {
-    NSNumber *originalRadius =
-        objc_getAssociatedObject(keyView, kLGKeyboardKeyOriginalRadiusKey);
-    NSNumber *originalMasks =
-        objc_getAssociatedObject(keyView, kLGKeyboardKeyOriginalMasksKey);
-    if (!originalRadius) {
-        originalRadius = @(keyView.layer.cornerRadius);
-        originalMasks = @(keyView.layer.masksToBounds);
-        objc_setAssociatedObject(keyView, kLGKeyboardKeyOriginalRadiusKey,
-                                 originalRadius,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(keyView, kLGKeyboardKeyOriginalMasksKey,
-                                 originalMasks,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-
-    if (!lgHostEnabled(@"Keyboard") || CGRectIsEmpty(keyView.bounds)) {
-        keyView.layer.cornerRadius = originalRadius.doubleValue;
-        keyView.layer.masksToBounds = originalMasks.boolValue;
-        return;
-    }
-
-    CGFloat shortEdge =
-        MIN(CGRectGetWidth(keyView.bounds), CGRectGetHeight(keyView.bounds));
-    keyView.layer.cornerRadius =
-        gLGKeyboardKeycapRadius > 0.0
-            ? MIN(gLGKeyboardKeycapRadius, shortEdge * 0.5)
-            : shortEdge * (10.0 / 46.0);
-    keyView.layer.cornerCurve = kCACornerCurveContinuous;
-    keyView.layer.masksToBounds = YES;
-}
-
 static BOOL LGIsKeyboardBackdrop(UIView *view) {
     return [NSStringFromClass(view.class) isEqualToString:@"UIKBBackdropView"] &&
            [NSStringFromClass(view.superview.class)
@@ -656,7 +557,7 @@ static void LGUpdateKeyboardGlass(UIView *stock) {
 
     mergedFrame.size.height += LGKeyboardTopOverhang() + kLGKeyboardBottomGlassExtra;
 
-    if (gLGKeyboardBackdropLogCount++ < 24) {
+    if (gLGKeyboardBackdropLogCount++ < 4) {
         LGLog(@"[keyboard] backdrop merge count=%lu prediction=%d primary=%p container=%@ merged=%@ members=[%@]",
               (unsigned long)backdrops.count, hasPredictionStrip, primary,
               NSStringFromClass(container.class), NSStringFromCGRect(mergedFrame),
@@ -811,176 +712,29 @@ static void LGUpdateKeyboardVisualEffect(UIView *effectView) {
 
 - (void)renderBackgroundTraits:(id)traits allowCaching:(BOOL)allowCaching {
     id geometry = LGKeyboardValue(traits, @"geometry");
-    SEL getter = NSSelectorFromString(@"roundRectRadius");
-    SEL setter = NSSelectorFromString(@"setRoundRectRadius:");
-    BOOL canOverride = lgHostEnabled(@"Keyboard") && geometry &&
-        [geometry respondsToSelector:getter] &&
-        [geometry respondsToSelector:setter];
+    SEL radiusGetter = NSSelectorFromString(@"roundRectRadius");
+    SEL radiusSetter = NSSelectorFromString(@"setRoundRectRadius:");
+    BOOL changesRadius = lgHostEnabled(@"Keyboard") && geometry &&
+        [geometry respondsToSelector:radiusGetter] &&
+        [geometry respondsToSelector:radiusSetter];
     CGFloat stockRadius = 0.0;
-    if (canOverride) {
-        stockRadius = ((CGFloat (*)(id, SEL))objc_msgSend)(geometry, getter);
-        CGFloat targetRadius = gLGKeyboardKeycapRadius > 0.0
-            ? gLGKeyboardKeycapRadius
-            : stockRadius * 2.0;
-        ((void (*)(id, SEL, CGFloat))objc_msgSend)(geometry, setter,
-                                                   targetRadius);
-        if (gLGKeyboardRenderingActionKey &&
-            gLGKeyboardActionLogCount++ < 160) {
-            LGLog(@"[keyboard] action background name=%@ flags=%lu cache=%d geometry=%p radius=%.2f->%.2f frame=%@ display=%@ symbol=%@",
-                  gLGKeyboardRenderingActionName ?: @"(unknown)",
-                  (unsigned long)LGKeyboardRendererFlags(self), allowCaching,
-                  geometry, stockRadius, targetRadius,
-                  LGKeyboardValue(geometry, @"frame"),
-                  LGKeyboardValue(geometry, @"displayFrame"),
-                  LGKeyboardValue(geometry, @"symbolFrame"));
-        }
+    if (changesRadius) {
+        stockRadius = ((CGFloat (*)(id, SEL))objc_msgSend)(geometry,
+                                                          radiusGetter);
+        CGFloat radius = fmin(23.0, fmax(0.0,
+            LG_prefFloat(@"Keyboard.KeyRadius",
+                         LGKeyboardDefaultKeyRadius)));
+        ((void (*)(id, SEL, CGFloat))objc_msgSend)(geometry, radiusSetter,
+                                                   radius);
     }
     @try {
         %orig(traits, allowCaching);
     } @finally {
-        if (canOverride) {
-            ((void (*)(id, SEL, CGFloat))objc_msgSend)(geometry, setter,
+        if (changesRadius) {
+            ((void (*)(id, SEL, CGFloat))objc_msgSend)(geometry, radiusSetter,
                                                        stockRadius);
         }
     }
-}
-
-- (void)renderKeyContents:(id)contents withTraits:(id)traits {
-
-    NSUInteger flags = LGKeyboardRendererFlags(self);
-    NSString *displayString = LGKeyboardValue(contents, @"displayString");
-    id geometry = LGKeyboardValue(traits, @"geometry");
-    NSValue *displayFrameValue = LGKeyboardValue(geometry, @"displayFrame");
-    CGFloat displayWidth = displayFrameValue
-        ? CGRectGetWidth(displayFrameValue.CGRectValue) : 0.0;
-    BOOL actionKey = displayString.length != 1 || displayWidth > 48.0;
-    if (actionKey && gLGKeyboardActionLogCount++ < 160) {
-        LGLog(@"[keyboard] action render name=%@ flags=%lu contents=%@ geometry=%p radius=%@ layeredBG=%@ layeredFG=%@ frame=%@ display=%@ symbol=%@",
-              displayString ?: @"(nil)", (unsigned long)flags,
-              NSStringFromClass([contents class]), geometry,
-              LGKeyboardValue(geometry, @"roundRectRadius"),
-              LGKeyboardValue(geometry, @"layeredBackgroundRoundRectRadius"),
-              LGKeyboardValue(geometry, @"layeredForegroundRoundRectRadius"),
-              LGKeyboardValue(geometry, @"frame"),
-              LGKeyboardValue(geometry, @"displayFrame"),
-              LGKeyboardValue(geometry, @"symbolFrame"));
-    }
-    BOOL rendersRoundedAtlas = flags == 1 || flags == 6;
-    SEL layeredGetter =
-        NSSelectorFromString(@"layeredBackgroundRoundRectRadius");
-    SEL layeredSetter =
-        NSSelectorFromString(@"setLayeredBackgroundRoundRectRadius:");
-    BOOL canOverrideLayeredBackground = lgHostEnabled(@"Keyboard") &&
-        actionKey && geometry &&
-        [geometry respondsToSelector:layeredGetter] &&
-        [geometry respondsToSelector:layeredSetter];
-    CGFloat stockLayeredBackgroundRadius = 0.0;
-    if (canOverrideLayeredBackground) {
-        stockLayeredBackgroundRadius =
-            ((CGFloat (*)(id, SEL))objc_msgSend)(geometry, layeredGetter);
-        CGFloat targetRadius = gLGKeyboardKeycapRadius > 0.0
-            ? gLGKeyboardKeycapRadius : 10.0;
-        ((void (*)(id, SEL, CGFloat))objc_msgSend)(geometry, layeredSetter,
-                                                   targetRadius);
-        if (gLGKeyboardActionLogCount++ < 160) {
-            LGLog(@"[keyboard] action layered-background name=%@ flags=%lu geometry=%p radius=%.2f->%.2f",
-                  displayString ?: @"(nil)", (unsigned long)flags, geometry,
-                  stockLayeredBackgroundRadius, targetRadius);
-        }
-    }
-    NSUInteger previousFlags = gLGKeyboardAtlasRenderFlags;
-    BOOL previousAction = gLGKeyboardRenderingActionKey;
-    NSString *previousActionName = gLGKeyboardRenderingActionName;
-    BOOL appliesRoundedAtlas = lgHostEnabled(@"Keyboard") && rendersRoundedAtlas;
-    if (appliesRoundedAtlas) gLGKeyboardAtlasRenderFlags = flags;
-    gLGKeyboardRenderingActionKey = actionKey;
-    gLGKeyboardRenderingActionName = displayString;
-    @try {
-        %orig(contents, traits);
-    } @finally {
-        if (canOverrideLayeredBackground) {
-            ((void (*)(id, SEL, CGFloat))objc_msgSend)(
-                geometry, layeredSetter, stockLayeredBackgroundRadius);
-        }
-        gLGKeyboardRenderingActionKey = previousAction;
-        gLGKeyboardRenderingActionName = previousActionName;
-        if (appliesRoundedAtlas) {
-            gLGKeyboardAtlasRenderFlags = previousFlags;
-        }
-    }
-}
-
-%end
-
-%hook UIKBRenderGeometry
-
-- (CGFloat)roundRectRadius {
-    CGFloat radius = %orig;
-    if (gLGKeyboardAtlasRenderFlags == 1) {
-        NSNumber *originalRadius =
-            objc_getAssociatedObject(self, kLGKeyboardGeometryKeycapRadiusKey);
-        if (!originalRadius) {
-            originalRadius = @(radius);
-            objc_setAssociatedObject(self, kLGKeyboardGeometryKeycapRadiusKey,
-                                     originalRadius,
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        CGFloat keycapRadius = originalRadius.doubleValue * 2.0;
-        gLGKeyboardKeycapRadius = keycapRadius;
-        return keycapRadius;
-    }
-    if (gLGKeyboardAtlasRenderFlags == 6 && gLGKeyboardKeycapRadius > 0.0) {
-
-        return gLGKeyboardKeycapRadius;
-    }
-    return radius;
-}
-
-%end
-
-%hook UIKBKeyView
-
-- (void)setKey:(id)key {
-    %orig(key);
-    NSString *name = LGKeyboardValue(key, @"name");
-    NSString *display = LGKeyboardValue(key, @"displayString");
-    if ((name.length > 0 || display.length != 1 ||
-         CGRectGetWidth(self.bounds) > 48.0) &&
-        gLGKeyboardActionLogCount++ < 160) {
-        LGLog(@"[keyboard] action assign view=%p class=%@ bounds=%@ state=%@ name=%@ display=%@ represented=%@ type=%@ style=%@ rendering=%@ geometry=%@",
-              self, NSStringFromClass(self.class), NSStringFromCGRect(self.bounds),
-              LGKeyboardValue(self, @"state"), name ?: @"(nil)",
-              display ?: @"(nil)", LGKeyboardValue(key, @"representedString"),
-              LGKeyboardValue(key, @"type"),
-              LGKeyboardValue(key, @"visualStyle"),
-              LGKeyboardValue(key, @"rendering"),
-              LGKeyboardValue(key, @"geometry"));
-    }
-    LGUpdateKeyboardKeyCorner(self);
-}
-
-- (void)didMoveToWindow {
-    %orig;
-    LGUpdateKeyboardKeyCorner(self);
-    if (self.window) {
-        LGRegenerateKeyboardKeyplaneIfNeeded([self keyplane]);
-        LGKeyboardScheduleKeyplaneRefresh();
-    }
-}
-
-- (void)layoutSubviews {
-    %orig;
-    LGUpdateKeyboardKeyCorner(self);
-}
-
-- (void)setBounds:(CGRect)bounds {
-    %orig(bounds);
-    LGUpdateKeyboardKeyCorner(self);
-}
-
-- (void)setFrame:(CGRect)frame {
-    %orig(frame);
-    LGUpdateKeyboardKeyCorner(self);
 }
 
 %end
@@ -1084,25 +838,13 @@ static void LGUpdateKeyboardVisualEffect(UIView *effectView) {
 %ctor {
     gLGKeyboardBackdrops = [NSHashTable weakObjectsHashTable];
     gLGKeyboardVisualEffects = [NSHashTable weakObjectsHashTable];
-    gLGKeyboardRegeneratedKeyplanes = [NSHashTable weakObjectsHashTable];
-    gLGKeyboardScheduledKeyplanes = [NSHashTable weakObjectsHashTable];
     gLGKeyboardHookedKeyplaneClasses = [NSMutableSet set];
-    LGLog(@"[keyboard] ctor process=%@ bundle=%@ renderer=%d geometry=%d keyView=%d backdrop=%d visualEffect=%d",
+    LGLog(@"[keyboard] ctor process=%@ bundle=%@ backdrop=%d visualEffect=%d",
           NSProcessInfo.processInfo.processName,
           NSBundle.mainBundle.bundleIdentifier ?: @"(nil)",
-          NSClassFromString(@"UIKBRenderer") != Nil,
-          NSClassFromString(@"UIKBRenderGeometry") != Nil,
-          NSClassFromString(@"UIKBKeyView") != Nil,
           NSClassFromString(@"UIKBBackdropView") != Nil,
           NSClassFromString(@"UIKBVisualEffectView") != Nil);
     lgObservePreferenceReload(^{
-
-        [gLGKeyboardRegeneratedKeyplanes removeAllObjects];
-        [gLGKeyboardScheduledKeyplanes removeAllObjects];
-        gLGKeyboardKeycapRadius = 0.0;
-        LGKeyboardSendVoid(NSClassFromString(@"UIKBRenderer"),
-                           NSSelectorFromString(@"clearInternalCaches"));
-
         LGKeyboardRefreshReportedGeometry(UIScreen.mainScreen);
         for (UIView *stock in gLGKeyboardBackdrops.allObjects) {
             LGUpdateKeyboardGlass(stock);
@@ -1110,7 +852,6 @@ static void LGUpdateKeyboardVisualEffect(UIView *effectView) {
         for (UIView *effectView in gLGKeyboardVisualEffects.allObjects) {
             LGUpdateKeyboardVisualEffect(effectView);
         }
-        LGRegenerateKeyboardKeyplaneIfNeeded(LGKeyboardCurrentKeyplaneView());
         LGKeyboardScheduleKeyplaneRefresh();
     });
 }

@@ -1,29 +1,28 @@
-export TARGET ?= iphone:clang:16.5:14.0
-export ARCHS ?= arm64 arm64e
-LIQUIDASS_DEBUG ?= 0
-export LIQUIDASS_DEBUG
+export TARGET 		?= iphone:clang:16.5:14.0
+export ARCHS 		?= arm64 arm64e
+export USE_DEPS 	?= 1
 
-INSTALL_TARGET_PROCESSES = backboardd SpringBoard
+CCACHE := $(shell command -v ccache 2>/dev/null)
+export TARGET_CC 	:= $(CCACHE) $(shell xcrun -f clang)
+export TARGET_CXX 	:= $(CCACHE) $(shell xcrun -f clang++)
+
+INSTALL_TARGET_PROCESSES = backboardd SpringBoard chronod WidgetRenderer-Default WidgetRenderer-CarPlay
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = liquidass
 
-liquidass_FILES     = Tweak.x Hooks/Dock.x Hooks/Folder.x Hooks/AppIcons.x Hooks/Banner.x Hooks/ControlCenter.x \
-                      Hooks/AppLibrary.x Hooks/SearchPill.x Hooks/Spotlight.x Hooks/Widgets.x Hooks/ContextMenu.x \
-                      Hooks/QuickActions.x Hooks/Passcode.x Hooks/Clock.x Hooks/Alerts.x \
-                      Hooks/PreferencesControls.x Hooks/CoverSheet.x Hooks/TabBar.x \
-                      Hooks/Keyboard.x \
-                      LiquidAssPrefs/LGPrefsLiquidSlider.m \
-                      LiquidAssPrefs/LGPrefsLiquidSwitch.m \
-                      Shared/LGGlassKit.x Shared/LGLiveBackdropView.m \
-                      Shared/LGSharedSupport.m
-liquidass_CFLAGS    = -fobjc-arc -DLIQUIDASS_DEBUG=$(LIQUIDASS_DEBUG)
+liquidass_FILES     = Tweak.x \
+                      $(wildcard Hooks/*.x) \
+                      $(wildcard LiquidAssPrefs/LGPrefsLiquid*.m) \
+                      $(wildcard Shared/*.[xm])
+liquidass_CFLAGS    = -fobjc-arc
+liquidass_USE_MODULES = 0
 liquidass_FRAMEWORKS = UIKit QuartzCore CoreText CoreGraphics CoreMotion
+ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
+liquidass_LIBRARIES += roothide
+endif
+
 
 include $(THEOS)/makefiles/tweak.mk
-SUBPROJECTS += LiquidAssBackboardd
-SUBPROJECTS += LiquidAssRWB
-SUBPROJECTS += LiquidAssPrefs
+SUBPROJECTS += LiquidAssBackboardd LiquidAssRWB LiquidAssPrefs
 include $(THEOS_MAKE_PATH)/aggregate.mk
-
-# originally i tried to add `release::` here but apparently that keeps breaking for whatever fucking reason so i decided to create `release.sh`

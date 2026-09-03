@@ -4,8 +4,6 @@
 #import "../Shared/LGGlassKit.h"
 #import <objc/runtime.h>
 
-extern CGFloat LGFolderIconCornerRadiusFallback(void);
-
 static void *kLGAppIconGlassKey = &kLGAppIconGlassKey;
 
 static BOOL LGIsAppIconImageView(UIView *view) {
@@ -50,10 +48,7 @@ static void LGInstallAppIconGlass(UIView *iconView) {
     [parent insertSubview:glass belowSubview:iconView];
     glass.frame = iconView.frame;
 
-    CGFloat folderRadius = LGFolderIconCornerRadiusFallback();
-    CGFloat radius = (isfinite(folderRadius) && folderRadius > 0.0)
-        ? folderRadius : iconView.layer.cornerRadius;
-    if (!isfinite(radius) || radius < 0.0) radius = 0.0;
+    CGFloat radius = CGRectGetWidth(iconView.frame) * 0.225;
     glass.layer.cornerRadius = radius;
     if (@available(iOS 13.0, *)) glass.layer.cornerCurve = kCACornerCurveContinuous;
     glass.layer.masksToBounds = YES;

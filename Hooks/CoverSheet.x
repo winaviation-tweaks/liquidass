@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
@@ -26,12 +27,25 @@ static const void *kLGCoverSheetOriginalAlphaKey =
 static const void *kLGCoverSheetFadeKey = &kLGCoverSheetFadeKey;
 static const void *kLGCoverSheetMaskKey = &kLGCoverSheetMaskKey;
 static const void *kLGCoverSheetBorderKey = &kLGCoverSheetBorderKey;
+static const void *kLGCoverSheetMaskRadiusKey = &kLGCoverSheetMaskRadiusKey;
 static const void *kLGCoverSheetMaskOrientationKey =
     &kLGCoverSheetMaskOrientationKey;
-static const void *kLGCoverSheetDimLayerKey = &kLGCoverSheetDimLayerKey;
-static const CGFloat kLGCoverSheetBottomCornerRadiusPoints = 39.0;
-static const CGFloat kLGCoverSheetDimOpacity = 0.18;
+static const CGFloat kLGCoverSheetDefaultCornerRadiusPoints = 64.0;
 static BOOL sLGCoverSheetCommitEndPresented;
+static BOOL sLGCoverSheetLockedPasscodeTriggered;
+static BOOL sLGCoverSheetLockedHandoffActive;
+static BOOL sLGCoverSheetLockedRollbackCommitted;
+static BOOL sLGCoverSheetLockedFirstRollbackDidEnd;
+static __weak id sLGCoverSheetLockedHandoffManager;
+static BOOL sLGCoverSheetLockedVisualPinActive;
+static __weak UIView *sLGCoverSheetLockedVisualPinView;
+static CATransform3D sLGCoverSheetLockedVisualPinBaseTransform;
+static CGPoint sLGCoverSheetLockedVisualPinOrigin;
+static CGPoint sLGCoverSheetLockedVisualPinOffset;
+static NSMutableArray<UIView *> *sLGCoverSheetLockedBranchPinViews;
+static NSMutableArray<NSValue *> *sLGCoverSheetLockedBranchPinTransforms;
+static BOOL sLGCoverSheetLockedBranchPinSawPasscodeVisible;
+static BOOL sLGCoverSheetLastKnownLocked;
 static BOOL sLGCoverSheetPerformingFade;
 static BOOL sLGCoverSheetFadeToHome;
 static BOOL sLGCoverSheetBeginDismissalFadeIn;
@@ -157,6 +171,390 @@ static UIDeviceOrientation LGCoverSheetDeviceOrientation(UIView *view) {
 
 static BOOL LGCoverSheetEnabled(void) {
     return lgHostEnabled(@"CoverSheet");
+}
+
+static CGFloat LGCoverSheetCornerRadiusPoints(void) {
+    return MAX(0.0, LG_prefFloat(@"CoverSheet.CornerRadius",
+                                 kLGCoverSheetDefaultCornerRadiusPoints));
+}
+
+static BOOL LGCoverSheetUsesLegacyLockedDismissal(void) {
+    return NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 26;
+}
+
+static BOOL LGCoverSheetIsEffectivelyLocked(id manager) {
+    if (!manager) return NO;
+    if (![NSThread isMainThread]) {
+        return sLGCoverSheetLastKnownLocked;
+    }
+    SEL selector = NSSelectorFromString(@"_isEffectivelyLocked");
+    if (![manager respondsToSelector:selector]) return NO;
+    BOOL locked = ((BOOL (*)(id, SEL))objc_msgSend)(manager, selector);
+    sLGCoverSheetLastKnownLocked = locked;
+    return locked;
+}
+
+static BOOL LGCoverSheetShouldRelaxLockedGate(id manager) {
+    return LGCoverSheetEnabled() &&
+           LGCoverSheetUsesLegacyLockedDismissal() &&
+           LGCoverSheetIsEffectivelyLocked(manager);
+}
+
+static UIView *LGCoverSheetSlidingControllerView(id controller) {
+    if (!controller || ![controller respondsToSelector:@selector(view)]) {
+        return nil;
+    }
+    id view = ((id (*)(id, SEL))objc_msgSend)(controller, @selector(view));
+    return [view isKindOfClass:UIView.class] ? (UIView *)view : nil;
+}
+
+static void LGCoverSheetReleaseLockedVisualPin(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LGCoverSheetReleaseLockedVisualPin();
+        });
+        return;
+    }
+    UIView *view = sLGCoverSheetLockedVisualPinView;
+    if (view && sLGCoverSheetLockedVisualPinActive) {
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        view.layer.sublayerTransform = sLGCoverSheetLockedVisualPinBaseTransform;
+        [CATransaction commit];
+    }
+    sLGCoverSheetLockedVisualPinActive = NO;
+    sLGCoverSheetLockedVisualPinView = nil;
+    sLGCoverSheetLockedVisualPinBaseTransform = CATransform3DIdentity;
+    sLGCoverSheetLockedVisualPinOrigin = CGPointZero;
+    sLGCoverSheetLockedVisualPinOffset = CGPointZero;
+}
+
+static void LGCoverSheetBeginLockedVisualPin(id controller,
+                                              CGRect coverSheetFrame) {
+    if (![NSThread isMainThread]) {
+        id controllerCopy = controller;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LGCoverSheetBeginLockedVisualPin(controllerCopy, coverSheetFrame);
+        });
+        return;
+    }
+    if (sLGCoverSheetLockedVisualPinActive) return;
+    UIView *view = LGCoverSheetSlidingControllerView(controller);
+    if (!view) {
+        LGLog(@"[coversheet-unlock] visual pin unavailable controller=%@",
+              NSStringFromClass([controller class]));
+        return;
+    }
+    sLGCoverSheetLockedVisualPinView = view;
+    sLGCoverSheetLockedVisualPinBaseTransform = view.layer.sublayerTransform;
+    sLGCoverSheetLockedVisualPinOrigin = coverSheetFrame.origin;
+    sLGCoverSheetLockedVisualPinOffset = CGPointZero;
+    sLGCoverSheetLockedVisualPinActive = YES;
+}
+
+static void LGCoverSheetUpdateLockedVisualPin(CGRect coverSheetFrame) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LGCoverSheetUpdateLockedVisualPin(coverSheetFrame);
+        });
+        return;
+    }
+    UIView *view = sLGCoverSheetLockedVisualPinView;
+    if (!sLGCoverSheetLockedVisualPinActive || !view) return;
+
+    CGFloat dx = sLGCoverSheetLockedVisualPinOrigin.x - coverSheetFrame.origin.x;
+    CGFloat dy = sLGCoverSheetLockedVisualPinOrigin.y - coverSheetFrame.origin.y;
+    sLGCoverSheetLockedVisualPinOffset = CGPointMake(dx, dy);
+    CATransform3D transform = CATransform3DTranslate(
+        sLGCoverSheetLockedVisualPinBaseTransform, dx, dy, 0.0);
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    view.layer.sublayerTransform = transform;
+    [CATransaction commit];
+}
+
+static BOOL LGCoverSheetViewClassContains(UIView *view,
+                                          NSString *needle) {
+    if (!view || needle.length == 0) return NO;
+    return [NSStringFromClass(view.class)
+               rangeOfString:needle
+                     options:NSCaseInsensitiveSearch].location
+           != NSNotFound;
+}
+
+static BOOL LGCoverSheetSubtreeContainsPasscode(UIView *root) {
+    if (!root) return NO;
+
+    NSMutableArray<UIView *> *stack =
+        [NSMutableArray arrayWithObject:root];
+    while (stack.count) {
+        UIView *view = stack.lastObject;
+        [stack removeLastObject];
+
+        if (LGCoverSheetViewClassContains(view, @"Passcode")) {
+            return YES;
+        }
+
+        if (view.subviews.count) {
+            [stack addObjectsFromArray:view.subviews];
+        }
+    }
+    return NO;
+}
+
+static UIView *LGCoverSheetFindViewByExactClass(id controller,
+                                                 NSString *className) {
+    UIView *root = LGCoverSheetSlidingControllerView(controller);
+    if (!root || className.length == 0) return nil;
+
+    NSMutableArray<UIView *> *stack =
+        [NSMutableArray arrayWithObject:root];
+    while (stack.count) {
+        UIView *view = stack.lastObject;
+        [stack removeLastObject];
+
+        if ([NSStringFromClass(view.class) isEqualToString:className]) {
+            return view;
+        }
+
+        if (view.subviews.count) {
+            [stack addObjectsFromArray:view.subviews];
+        }
+    }
+    return nil;
+}
+
+static void LGCoverSheetReleaseLockedBranchPins(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LGCoverSheetReleaseLockedBranchPins();
+        });
+        return;
+    }
+
+    NSUInteger count = MIN(sLGCoverSheetLockedBranchPinViews.count,
+                           sLGCoverSheetLockedBranchPinTransforms.count);
+    if (count == 0) {
+        sLGCoverSheetLockedBranchPinViews = nil;
+        sLGCoverSheetLockedBranchPinTransforms = nil;
+        sLGCoverSheetLockedBranchPinSawPasscodeVisible = NO;
+        return;
+    }
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    for (NSUInteger index = 0; index < count; index++) {
+        UIView *view = sLGCoverSheetLockedBranchPinViews[index];
+        NSValue *value = sLGCoverSheetLockedBranchPinTransforms[index];
+        if (!view || !value) continue;
+
+        CATransform3D transform = CATransform3DIdentity;
+        [value getValue:&transform];
+        view.layer.transform = transform;
+    }
+
+    [CATransaction commit];
+
+    sLGCoverSheetLockedBranchPinViews = nil;
+    sLGCoverSheetLockedBranchPinTransforms = nil;
+    sLGCoverSheetLockedBranchPinSawPasscodeVisible = NO;
+}
+
+static void LGCoverSheetPinBranch(UIView *branch,
+                                  CGPoint offset,
+                                  NSUInteger *pinnedCount) {
+    if (!branch) return;
+
+    CATransform3D original = branch.layer.transform;
+    NSValue *saved =
+        [NSValue valueWithBytes:&original
+                       objCType:@encode(CATransform3D)];
+
+    [branch.layer removeAnimationForKey:@"transform"];
+    branch.layer.transform =
+        CATransform3DTranslate(original, offset.x, offset.y, 0.0);
+
+    [sLGCoverSheetLockedBranchPinViews addObject:branch];
+    [sLGCoverSheetLockedBranchPinTransforms addObject:saved];
+
+    if (pinnedCount) (*pinnedCount)++;
+}
+
+static void LGCoverSheetPinEverythingExceptPasscodePath(
+    UIView *root,
+    CGPoint offset,
+    NSUInteger *pinnedCount) {
+    if (!root) return;
+
+    for (UIView *child in root.subviews) {
+        if (!child) continue;
+
+        if (LGCoverSheetViewClassContains(child, @"Passcode")) {
+            continue;
+        }
+        if (LGCoverSheetSubtreeContainsPasscode(child)) {
+            LGCoverSheetPinEverythingExceptPasscodePath(
+                child, offset, pinnedCount);
+            continue;
+        }
+        LGCoverSheetPinBranch(child, offset, pinnedCount);
+    }
+}
+
+static NSUInteger LGCoverSheetTransferRootPinToNonPasscodeBranches(
+    id controller) {
+    if (![NSThread isMainThread] ||
+        !sLGCoverSheetLockedVisualPinActive) {
+        return 0;
+    }
+
+    UIView *coverSheet =
+        LGCoverSheetFindViewByExactClass(controller, @"CSCoverSheetView");
+    if (!coverSheet) {
+        LGLog(@"[coversheet-unlock] branch pin unavailable: "
+              "CSCoverSheetView not found");
+        return 0;
+    }
+
+    CGPoint offset = sLGCoverSheetLockedVisualPinOffset;
+    if (fabs(offset.x) < 0.5 && fabs(offset.y) < 0.5) {
+        LGLog(@"[coversheet-unlock] branch pin unavailable: "
+              "root offset={%.1f, %.1f}",
+              offset.x, offset.y);
+        return 0;
+    }
+
+    LGCoverSheetReleaseLockedBranchPins();
+    sLGCoverSheetLockedBranchPinViews = [NSMutableArray array];
+    sLGCoverSheetLockedBranchPinTransforms = [NSMutableArray array];
+    sLGCoverSheetLockedBranchPinSawPasscodeVisible = NO;
+
+    NSUInteger pinnedCount = 0;
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+
+    LGCoverSheetPinEverythingExceptPasscodePath(
+        coverSheet, offset, &pinnedCount);
+
+    [CATransaction commit];
+
+    return pinnedCount;
+}
+
+static BOOL LGCoverSheetViewEffectivelyVisible(UIView *view) {
+    if (!view || !view.window) return NO;
+
+    for (UIView *cursor = view; cursor; cursor = cursor.superview) {
+        if (cursor.hidden || cursor.alpha <= 0.01) return NO;
+    }
+    return YES;
+}
+
+static BOOL LGCoverSheetPasscodeModelVisible(void) {
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        if (!window || window.hidden || window.alpha <= 0.01) continue;
+
+        NSMutableArray<UIView *> *stack =
+            [NSMutableArray arrayWithObject:window];
+        while (stack.count) {
+            UIView *view = stack.lastObject;
+            [stack removeLastObject];
+
+            NSString *className = NSStringFromClass(view.class);
+            BOOL passcodeSentinel =
+                [className isEqualToString:@"CSPasscodeBackgroundView"] ||
+                [className isEqualToString:
+                    @"SBUIPasscodeLockViewSimpleFixedDigitKeypad"];
+
+            if (passcodeSentinel &&
+                LGCoverSheetViewEffectivelyVisible(view)) {
+                return YES;
+            }
+
+            if (view.subviews.count) {
+                [stack addObjectsFromArray:view.subviews];
+            }
+        }
+    }
+    return NO;
+}
+
+static void LGCoverSheetWatchBranchPinsForPasscodeDismissal(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LGCoverSheetWatchBranchPinsForPasscodeDismissal();
+        });
+        return;
+    }
+
+    if (sLGCoverSheetLockedBranchPinViews.count == 0) return;
+
+    BOOL visible = LGCoverSheetPasscodeModelVisible();
+    if (visible) {
+        if (!sLGCoverSheetLockedBranchPinSawPasscodeVisible) {
+            sLGCoverSheetLockedBranchPinSawPasscodeVisible = YES;
+        }
+    } else if (sLGCoverSheetLockedBranchPinSawPasscodeVisible) {
+        LGCoverSheetReleaseLockedBranchPins();
+        return;
+    }
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW,
+                      (int64_t)(0.25 * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+            LGCoverSheetWatchBranchPinsForPasscodeDismissal();
+        });
+}
+
+static void LGCoverSheetResetLockedHandoff(BOOL resetTriggered) {
+    LGCoverSheetReleaseLockedBranchPins();
+    LGCoverSheetReleaseLockedVisualPin();
+    if (resetTriggered) {
+        sLGCoverSheetLockedPasscodeTriggered = NO;
+    }
+    sLGCoverSheetLockedHandoffActive = NO;
+    sLGCoverSheetLockedRollbackCommitted = NO;
+    sLGCoverSheetLockedFirstRollbackDidEnd = NO;
+    sLGCoverSheetLockedHandoffManager = nil;
+}
+
+static BOOL LGCoverSheetRequestLockedPasscode(id manager, id controller) {
+    if (!LGCoverSheetShouldRelaxLockedGate(manager) ||
+        sLGCoverSheetLockedPasscodeTriggered) {
+        LGLog(@"[coversheet-unlock] skipped relax=%d alreadyTriggered=%d",
+              LGCoverSheetShouldRelaxLockedGate(manager),
+              sLGCoverSheetLockedPasscodeTriggered);
+        return NO;
+    }
+
+    SEL selector = NULL;
+    for (NSString *name in @[@"_notifyDelegateRequestsUnlock",
+                             @"_requestUnlockWithPasscode",
+                             @"notifyDelegateRequestsUnlock",
+                             @"_notifyDelegateRequestsUnlockWithIntent:"]) {
+        SEL candidate = NSSelectorFromString(name);
+        if ([manager respondsToSelector:candidate]) { selector = candidate; break; }
+    }
+    if (!selector) {
+        LGLog(@"[coversheet-unlock] passcode request unavailable manager=%@ (%@)",
+              NSStringFromClass([manager class]),
+              UIDevice.currentDevice.systemVersion);
+        return NO;
+    }
+    LGLog(@"[coversheet-unlock] requesting passcode via %@", NSStringFromSelector(selector));
+
+    sLGCoverSheetLockedPasscodeTriggered = YES;
+    sLGCoverSheetLockedHandoffActive = NO;
+    sLGCoverSheetLockedRollbackCommitted = NO;
+    (void)controller;
+    if ([NSStringFromSelector(selector) hasSuffix:@":"])
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(manager, selector, 0);
+    else
+        ((void (*)(id, SEL))objc_msgSend)(manager, selector);
+    return YES;
 }
 
 static BOOL LGCoverSheetModeUsesGlass(LGCoverSheetMode mode) {
@@ -300,9 +698,13 @@ static void LGCoverSheetUpdateBottomCornerMask(LGLiveBackdropView *glass) {
     UIDeviceOrientation orientation = LGCoverSheetDeviceOrientation(glass);
     NSNumber *maskedOrientation =
         objc_getAssociatedObject(glass, kLGCoverSheetMaskOrientationKey);
+    CGFloat cornerRadius = LGCoverSheetCornerRadiusPoints();
+    NSNumber *maskedRadius =
+        objc_getAssociatedObject(glass, kLGCoverSheetMaskRadiusKey);
     if (CGRectEqualToRect(mask.frame, glass.bounds) && mask.path &&
         CGRectEqualToRect(border.frame, glass.bounds) && border.path &&
-        maskedOrientation.unsignedIntegerValue == (NSUInteger)orientation) {
+        maskedOrientation.unsignedIntegerValue == (NSUInteger)orientation &&
+        fabs(maskedRadius.doubleValue - cornerRadius) < 0.01) {
         return;
     }
 
@@ -315,17 +717,7 @@ static void LGCoverSheetUpdateBottomCornerMask(LGLiveBackdropView *glass) {
     UIBezierPath *maskPath = [UIBezierPath
         bezierPathWithRoundedRect:glass.bounds
                byRoundingCorners:roundedCorners
-                     cornerRadii:CGSizeMake(kLGCoverSheetBottomCornerRadiusPoints,
-                                            kLGCoverSheetBottomCornerRadiusPoints)];
-    CGRect borderRect = CGRectInset(glass.bounds, lineWidth * 0.5,
-                                    lineWidth * 0.5);
-    UIBezierPath *borderPath = [UIBezierPath
-        bezierPathWithRoundedRect:borderRect
-               byRoundingCorners:roundedCorners
-                     cornerRadii:CGSizeMake(MAX(0.0,
-                                                kLGCoverSheetBottomCornerRadiusPoints - lineWidth * 0.5),
-                                            MAX(0.0,
-                                                kLGCoverSheetBottomCornerRadiusPoints - lineWidth * 0.5))];
+                     cornerRadii:CGSizeMake(cornerRadius, cornerRadius)];
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     mask.frame = glass.bounds;
@@ -333,10 +725,13 @@ static void LGCoverSheetUpdateBottomCornerMask(LGLiveBackdropView *glass) {
     border.frame = glass.bounds;
     border.contentsScale = scale;
     border.lineWidth = lineWidth;
-    border.path = borderPath.CGPath;
+    border.path = maskPath.CGPath;
     [CATransaction commit];
     objc_setAssociatedObject(glass, kLGCoverSheetMaskOrientationKey,
                              @((NSUInteger)orientation),
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(glass, kLGCoverSheetMaskRadiusKey,
+                             @(cornerRadius),
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
@@ -370,20 +765,6 @@ static LGLiveBackdropView *LGCoverSheetEnsureGlass(UIView *panel) {
         objc_setAssociatedObject(panel, kLGCoverSheetGlassKey, glass,
                                  OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    CALayer *dimLayer =
-        objc_getAssociatedObject(glass, kLGCoverSheetDimLayerKey);
-    if (!dimLayer) {
-        dimLayer = [CALayer layer];
-        dimLayer.backgroundColor = UIColor.blackColor.CGColor;
-        dimLayer.opacity = kLGCoverSheetDimOpacity;
-        dimLayer.actions = @{@"bounds": NSNull.null,
-                             @"position": NSNull.null,
-                             @"opacity": NSNull.null};
-        [glass.layer addSublayer:dimLayer];
-        objc_setAssociatedObject(glass, kLGCoverSheetDimLayerKey, dimLayer,
-                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    dimLayer.frame = glass.bounds;
     if (glass.superview != parent) {
         [glass removeFromSuperview];
     }
@@ -415,9 +796,11 @@ static void LGCoverSheetSyncGlassGeometry(UIView *panel,
     glass.layer.position = sourceLayer.position;
     glass.layer.transform = sourceLayer.transform;
     [CATransaction commit];
-    CALayer *dimLayer =
-        objc_getAssociatedObject(glass, kLGCoverSheetDimLayerKey);
-    dimLayer.frame = glass.bounds;
+    if (LGCoverSheetModeUsesGlass(sLGCoverSheetMode) &&
+        [NSThread isMainThread]) {
+        [CATransaction flush];
+    }
+
     LGCoverSheetUpdateBottomCornerMask(glass);
 
     if (LGCoverSheetModeUsesGlass(sLGCoverSheetMode)) {
@@ -441,25 +824,6 @@ static void LGCoverSheetSyncGlassGeometry(UIView *panel,
             deviceOrientation = sLGCoverSheetLastLandscapeOrientation;
         } else if (UIDeviceOrientationIsLandscape(deviceOrientation)) {
             sLGCoverSheetLastLandscapeOrientation = deviceOrientation;
-        }
-        static UIDeviceOrientation lastLoggedOrientation =
-            UIDeviceOrientationUnknown;
-        static NSUInteger initialGeometryLogs = 0;
-        if (deviceOrientation != lastLoggedOrientation ||
-            initialGeometryLogs < 8) {
-            lastLoggedOrientation = deviceOrientation;
-            initialGeometryLogs++;
-            CATransform3D transform = sourceLayer.transform;
-            LGLog(@"[coversheet-state-write] orientation=%ld mode=%ld "
-                   "capture={%.2f,%.2f} ratio={%.4f,%.4f} size={%.2f,%.2f} "
-                   "glassFrame=%@ glassBounds=%@ layerBasis={%.3f,%.3f,%.3f,%.3f}",
-                  (long)deviceOrientation, (long)sLGCoverSheetMode,
-                  captureOrigin.x, captureOrigin.y,
-                  width > 0.0 ? captureOrigin.x / width : 0.0,
-                  height > 0.0 ? captureOrigin.y / height : 0.0,
-                  width, height, NSStringFromCGRect(glass.frame),
-                  NSStringFromCGRect(glass.bounds), transform.m11,
-                  transform.m12, transform.m21, transform.m22);
         }
         LGCoverSheetWriteSharedState(
             true,
@@ -743,12 +1107,209 @@ static void LGCoverSheetSetMode(LGCoverSheetMode mode) {
 
 %end
 
+
+static void LGCoverSheetProbeCapabilities(id manager) {
+    if (!LGDebugLoggingEnabled()) return;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSArray<NSString *> *selectors = @[
+            @"_isEffectivelyLocked",
+            @"coverSheetSlidingViewControllerShouldAllowDismissal:",
+            @"coverSheetSlidingViewControllerDidPassRubberBandThreshold:",
+            @"_prepareForRubberBandDismissalTransitionForSlidingViewController:",
+            @"coverSheetSlidingViewController:committingToEndPresented:",
+            @"coverSheetSlidingViewController:prepareForPresentationTransitionForUserGesture:",
+            @"coverSheetSlidingViewController:animationTickedWithProgress:velocity:coverSheetFrame:gestureActive:forPresentationValue:",
+            @"coverSheetSlidingViewController:animationTickedWithProgress:coverSheetFrame:gestureActive:forPresentationValue:",
+            @"_notifyDelegateRequestsUnlock",
+        ];
+        NSMutableString *out = [NSMutableString stringWithFormat:
+            @"[CSSWIPE] probe ios=%@ manager=%@ legacyPath=%d enabled=%d",
+            UIDevice.currentDevice.systemVersion,
+            manager ? NSStringFromClass([manager class]) : @"nil",
+            LGCoverSheetUsesLegacyLockedDismissal(), LGCoverSheetEnabled()];
+        for (NSString *name in selectors) {
+            [out appendFormat:@"\n  %@ = %d", name,
+                [manager respondsToSelector:NSSelectorFromString(name)]];
+        }
+
+        [out appendString:@"\n  --- actual delegate selectors ---"];
+        for (Class cls = [manager class]; cls && cls != NSObject.class;
+             cls = class_getSuperclass(cls)) {
+            unsigned int count = 0;
+            Method *methods = class_copyMethodList(cls, &count);
+            for (unsigned int i = 0; i < count; i++) {
+                NSString *name = NSStringFromSelector(method_getName(methods[i]));
+                if ([name containsString:@"animationTicked"] ||
+                    [name containsString:@"coverSheetSlidingViewController"] ||
+                    [name containsString:@"RubberBand"] ||
+                    [name containsString:@"Unlock"] ||
+                    [name containsString:@"unlock"] ||
+                    [name containsString:@"asscode"] ||
+                    [name containsString:@"uthenticat"]) {
+                    [out appendFormat:@"\n    %@ %@", NSStringFromClass(cls), name];
+                }
+            }
+            free(methods);
+        }
+        LGLog(@"%@", out);
+    });
+}
+
+static void LGCoverSheetTrace(id manager, NSString *event, NSString *detail) {
+    if (!LGDebugLoggingEnabled()) return;
+    LGCoverSheetProbeCapabilities(manager);
+    LGLog(@"[CSSWIPE] %@ relax=%d locked=%d mode=%d handoff=%d rollback=%d "
+          @"firstRollbackEnded=%d pin=%d passcode=%d%@%@",
+          event, LGCoverSheetShouldRelaxLockedGate(manager),
+          LGCoverSheetIsEffectivelyLocked(manager), (int)sLGCoverSheetMode,
+          sLGCoverSheetLockedHandoffActive, sLGCoverSheetLockedRollbackCommitted,
+          sLGCoverSheetLockedFirstRollbackDidEnd,
+          sLGCoverSheetLockedVisualPinActive, sLGCoverSheetLockedPasscodeTriggered,
+          detail.length ? @" " : @"", detail ?: @"");
+}
+
+static void LGCoverSheetHandleAnimationTick(id self, id controller, double progress,
+                                            CGRect coverSheetFrame,
+                                            BOOL gestureActive,
+                                            BOOL forPresentationValue,
+                                            void (^callOrig)(void)) {
+    BOOL terminalModelTick =
+        sLGCoverSheetLockedHandoffActive &&
+        !forPresentationValue && !gestureActive && progress >= 0.999;
+    BOOL shouldBeginLogicalRollback =
+        terminalModelTick && !sLGCoverSheetLockedRollbackCommitted;
+    BOOL shouldBeginVisualPin =
+        terminalModelTick && !sLGCoverSheetLockedVisualPinActive;
+
+    if (sLGCoverSheetLockedHandoffActive &&
+        sLGCoverSheetLockedRollbackCommitted &&
+        forPresentationValue && !gestureActive) {
+        return;
+    }
+
+    if (LGDebugLoggingEnabled()) {
+        static BOOL lastHandoff, lastRollback, lastPin;
+        static BOOL seenFirstTick;
+        if (!seenFirstTick || lastHandoff != sLGCoverSheetLockedHandoffActive ||
+            lastRollback != sLGCoverSheetLockedRollbackCommitted ||
+            lastPin != sLGCoverSheetLockedVisualPinActive) {
+            seenFirstTick = YES;
+            lastHandoff = sLGCoverSheetLockedHandoffActive;
+            lastRollback = sLGCoverSheetLockedRollbackCommitted;
+            lastPin = sLGCoverSheetLockedVisualPinActive;
+            LGCoverSheetTrace(self, @"tick",
+                [NSString stringWithFormat:
+                    @"progress=%.3f gesture=%d forPresentation=%d "
+                    @"frame=%@ terminal=%d beginRollback=%d beginPin=%d",
+                    progress, gestureActive, forPresentationValue,
+                    NSStringFromCGRect(coverSheetFrame), terminalModelTick,
+                    shouldBeginLogicalRollback, shouldBeginVisualPin]);
+        }
+    }
+
+    if (shouldBeginVisualPin) {
+        LGCoverSheetBeginLockedVisualPin(controller, coverSheetFrame);
+    }
+
+    callOrig();
+
+    if (sLGCoverSheetLockedVisualPinActive) {
+        LGCoverSheetUpdateLockedVisualPin(coverSheetFrame);
+    }
+
+    if (shouldBeginLogicalRollback &&
+        !sLGCoverSheetLockedRollbackCommitted) {
+        SEL commitSelector = NSSelectorFromString(
+            @"coverSheetSlidingViewController:committingToEndPresented:");
+        if ([(id)self respondsToSelector:commitSelector]) {
+            ((void (*)(id, SEL, id, BOOL))objc_msgSend)(
+                self, commitSelector, controller, YES);
+        } else {
+            LGLog(@"[coversheet-unlock] logical rollback selector unavailable");
+            LGCoverSheetResetLockedHandoff(YES);
+        }
+    }
+
+    
+}
+
+static void LGCoverSheetHandleTransitionEnd(id self, id controller,
+                                            NSString *source,
+                                            void (^callOrig)(void)) {
+    LGCoverSheetTrace(self, @"transitionEnd", source);
+    BOOL trackingRollback =
+        sLGCoverSheetLockedHandoffActive &&
+        sLGCoverSheetLockedRollbackCommitted;
+
+    if (!trackingRollback) {
+        callOrig();
+        return;
+    }
+
+    BOOL singlePhase = [source isEqualToString:@"cleanupPresentation"];
+    if (!singlePhase && !sLGCoverSheetLockedFirstRollbackDidEnd) {
+        sLGCoverSheetLockedFirstRollbackDidEnd = YES;
+        callOrig();
+        return;
+    }
+    callOrig();
+
+    sLGCoverSheetLockedHandoffActive = NO;
+    sLGCoverSheetLockedRollbackCommitted = NO;
+    sLGCoverSheetLockedFirstRollbackDidEnd = NO;
+    sLGCoverSheetLockedHandoffManager = nil;
+    sLGCoverSheetCommitEndPresented = YES;
+    LGCoverSheetSetMode(LGCoverSheetModeIdle);
+    id managerCopy = (id)self;
+    id controllerCopy = controller;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        LGCoverSheetRequestLockedPasscode(managerCopy, controllerCopy);
+
+        NSUInteger transferred =
+            LGCoverSheetTransferRootPinToNonPasscodeBranches(controllerCopy);
+        LGCoverSheetReleaseLockedVisualPin();
+
+        if (transferred > 0) {
+            LGCoverSheetWatchBranchPinsForPasscodeDismissal();
+        }
+    });
+}
+
 %hook SBCoverSheetPresentationManager
+
+- (BOOL)coverSheetSlidingViewControllerShouldAllowDismissal:(id)controller {
+    BOOL original = %orig;
+    LGCoverSheetTrace(self, @"shouldAllowDismissal",
+                      [NSString stringWithFormat:@"orig=%d", original]);
+    if (LGCoverSheetShouldRelaxLockedGate(self)) {
+        return YES;
+    }
+    return original;
+}
+
+- (void)coverSheetSlidingViewControllerDidPassRubberBandThreshold:(id)controller {
+    LGCoverSheetTrace(self, @"didPassRubberBandThreshold", nil);
+    if (LGCoverSheetShouldRelaxLockedGate(self)) {
+        return;
+    }
+    %orig;
+}
+
+- (void)_prepareForRubberBandDismissalTransitionForSlidingViewController:(id)controller {
+    LGCoverSheetTrace(self, @"prepareForRubberBandDismissal", nil);
+    if (LGCoverSheetShouldRelaxLockedGate(self)) {
+        return;
+    }
+    %orig;
+}
 
 - (void)coverSheetSlidingViewController:(id)controller
 prepareForPresentationTransitionForUserGesture:(BOOL)userGesture {
     %orig;
     (void)controller;
+    LGCoverSheetTrace(self, @"prepareForPresentation",
+                      [NSString stringWithFormat:@"userGesture=%d", userGesture]);
     if (LGCoverSheetEnabled() && userGesture) {
         LGCoverSheetSetMode(LGCoverSheetModePresentingGlass);
     }
@@ -757,16 +1318,67 @@ prepareForPresentationTransitionForUserGesture:(BOOL)userGesture {
 - (void)coverSheetSlidingViewController:(id)controller
 prepareForDismissalTransitionForReversingTransition:(BOOL)reversing
                          forUserGesture:(BOOL)userGesture {
-    if (LGCoverSheetEnabled() && userGesture) {
-
+    BOOL relaxed = LGCoverSheetShouldRelaxLockedGate(self);
+    LGCoverSheetTrace(self, @"prepareForDismissal",
+                      [NSString stringWithFormat:@"userGesture=%d reversing=%d relaxed=%d",
+                                                 userGesture, reversing, relaxed]);
+    if (relaxed) {
+        LGCoverSheetResetLockedHandoff(YES);
+    } else if (LGCoverSheetEnabled() && userGesture) {
         LGCoverSheetCaptureWallpaperSnapshots();
     }
+
     %orig;
     (void)controller;
     (void)reversing;
+
     if (LGCoverSheetEnabled() && userGesture) {
         LGCoverSheetSetMode(LGCoverSheetModeDismissing);
     }
+}
+
+- (void)coverSheetSlidingViewController:(id)controller
+             animationTickedWithProgress:(double)progress
+                                velocity:(double)velocity
+                        coverSheetFrame:(CGRect)coverSheetFrame
+                           gestureActive:(BOOL)gestureActive
+                 forPresentationValue:(BOOL)forPresentationValue {
+    (void)velocity;
+    LGCoverSheetHandleAnimationTick(self, controller, progress, coverSheetFrame,
+                                    gestureActive, forPresentationValue, ^{
+        %orig;
+    });
+}
+
+- (void)coverSheetSlidingViewController:(id)controller
+             animationTickedWithProgress:(double)progress
+                        coverSheetFrame:(CGRect)coverSheetFrame
+                           gestureActive:(BOOL)gestureActive
+                 forPresentationValue:(BOOL)forPresentationValue {
+    LGCoverSheetHandleAnimationTick(self, controller, progress, coverSheetFrame,
+                                    gestureActive, forPresentationValue, ^{
+        %orig;
+    });
+}
+
+- (void)coverSheetSlidingViewControllerDidEndTransition:(id)controller {
+    LGCoverSheetHandleTransitionEnd(self, controller, @"didEndTransition", ^{
+        %orig;
+    });
+}
+
+- (void)coverSheetSlidingViewControllerCleanupPresentationTransition:(id)controller {
+    LGCoverSheetHandleTransitionEnd(self, controller, @"cleanupPresentation", ^{
+        %orig;
+    });
+}
+
+- (void)willUIUnlockWithPendingUnlockRequest:(BOOL)pending {
+    if (!LGCoverSheetIsEffectivelyLocked(self)) {
+        LGCoverSheetResetLockedHandoff(YES);
+    }
+    %orig;
+    (void)pending;
 }
 
 - (void)coverSheetSlidingViewController:(id)controller
@@ -778,8 +1390,29 @@ prepareForDismissalTransitionForReversingTransition:(BOOL)reversing
         LGCoverSheetConsumeDeferredDismissalCommit();
         return;
     }
+
     BOOL completedDismissal =
         sLGCoverSheetMode == LGCoverSheetModeDismissing && !endPresented;
+
+    if (LGCoverSheetShouldRelaxLockedGate(self) && !endPresented) {
+        sLGCoverSheetLockedHandoffActive = YES;
+        sLGCoverSheetLockedRollbackCommitted = NO;
+        sLGCoverSheetLockedFirstRollbackDidEnd = NO;
+        sLGCoverSheetLockedHandoffManager = (id)self;
+        return;
+    }
+
+    if (sLGCoverSheetLockedHandoffActive && endPresented) {
+        if (sLGCoverSheetLockedRollbackCommitted) {
+            return;
+        }
+
+        sLGCoverSheetLockedRollbackCommitted = YES;
+        %orig;
+        sLGCoverSheetCommitEndPresented = YES;
+        return;
+    }
+
     BOOL hasFrozenWallpaper = NO;
     if (completedDismissal) {
         for (UIView *panel in sLGCoverSheetPanels.allObjects) {
@@ -789,12 +1422,13 @@ prepareForDismissalTransitionForReversingTransition:(BOOL)reversing
             }
         }
     }
+
     if (completedDismissal && hasFrozenWallpaper) {
         id manager = self;
         id slidingController = controller;
         sLGCoverSheetDeferredDismissalCommit = [^{
-            (void)manager;
             %orig(slidingController, endPresented);
+            (void)manager;
         } copy];
         sLGCoverSheetCommitEndPresented = endPresented;
         LGCoverSheetSetMode(LGCoverSheetModeIdle);
@@ -815,6 +1449,80 @@ prepareForDismissalTransitionForReversingTransition:(BOOL)reversing
     LGCoverSheetSetMode(LGCoverSheetModeIdle);
 }
 
+
+- (void)_setCoverSheetPresented:(BOOL)presented
+                 forcePresented:(BOOL)forcePresented
+                       animated:(BOOL)animated
+                 withCompletion:(id)completion {
+    BOOL fastTerminal =
+        sLGCoverSheetLockedHandoffActive &&
+        sLGCoverSheetLockedRollbackCommitted &&
+        presented && forcePresented && animated;
+
+    if (fastTerminal) {
+        %orig(presented, forcePresented, NO, completion);
+        return;
+    }
+
+    %orig;
+}
+
+- (void)_setCoverSheetPresented:(BOOL)presented
+                 forcePresented:(BOOL)forcePresented
+                       animated:(BOOL)animated
+                        options:(NSUInteger)options
+                 withCompletion:(id)completion {
+    BOOL fastTerminal =
+        sLGCoverSheetLockedHandoffActive &&
+        sLGCoverSheetLockedRollbackCommitted &&
+        presented && forcePresented && animated;
+
+    if (fastTerminal) {
+        %orig(presented, forcePresented, NO, options, completion);
+        return;
+    }
+
+    %orig;
+}
+
+%end
+
+%hook SBCoverSheetPrimarySlidingViewController
+
+- (void)_commitTransitionToAppeared:(BOOL)appeared animated:(BOOL)animated {
+    BOOL fastPhase1 =
+        sLGCoverSheetLockedHandoffActive &&
+        !sLGCoverSheetLockedRollbackCommitted &&
+        !appeared && animated;
+
+    if (!fastPhase1) {
+        %orig;
+        return;
+    }
+
+    id manager = sLGCoverSheetLockedHandoffManager;
+    SEL commitSelector = NSSelectorFromString(
+        @"coverSheetSlidingViewController:committingToEndPresented:");
+
+    if (!manager || ![(id)manager respondsToSelector:commitSelector]) {
+        LGLog(@"[coversheet-unlock] phase 1 accelerator unavailable; "
+              "use normal animation");
+        %orig;
+        return;
+    }
+    ((void (*)(id, SEL, id, BOOL))objc_msgSend)(
+        manager, commitSelector, (id)self, YES);
+
+    if (!sLGCoverSheetLockedRollbackCommitted) {
+        LGLog(@"[coversheet-unlock] phase 1 logical commit rejected; "
+              "use normal animation");
+        %orig;
+        return;
+    }
+
+    %orig(appeared, NO);
+}
+
 %end
 
 %ctor {
@@ -824,6 +1532,7 @@ prepareForDismissalTransitionForReversingTransition:(BOOL)reversing
         if (!LGCoverSheetEnabled()) {
             sLGCoverSheetMode = LGCoverSheetModeIdle;
             sLGCoverSheetCommitEndPresented = NO;
+            LGCoverSheetResetLockedHandoff(YES);
             sLGCoverSheetPerformingFade = NO;
             sLGCoverSheetFadeToHome = NO;
             sLGCoverSheetBeginDismissalFadeIn = NO;

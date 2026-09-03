@@ -155,6 +155,10 @@
 "prefs.global_controls.exclusions.subtitle" = "Pomiń niestandardowe sterowanie dla pasujących identyfikatorów bundle lub nazw plików wykonywalnych.";
 "prefs.global_controls.exclusions.body" = "Wprowadź jeden identyfikator bundle lub nazwę pliku wykonywalnego w wierszu. Zmiany są stosowane po ponownym otwarciu dotkniętej aplikacji.";
 "prefs.global_controls.exclusions.placeholder" = "com.example.app\nExampleExecutable";
+"prefs.tab_bar.exclusions.title" = "Exclusion List";
+"prefs.tab_bar.exclusions.subtitle" = "Skip tab bars in matching bundle IDs or executable names.";
+"prefs.tab_bar.exclusions.body" = "Enter one bundle ID or executable name per line. Changes apply after reopening the affected app.";
+"prefs.tab_bar.exclusions.placeholder" = "com.example.app\nExampleExecutable";
 "prefs.global_controls.section.title" = "Niestandardowe sterowanie";
 "prefs.global_controls.section.subtitle" = "Wybierz, które sterowanie systemowe jest zastępowane w aplikacjach.";
 "prefs.global_controls.switches.title" = "Przełączniki";
@@ -168,3 +172,22 @@
 "prefs.section.keyboard_geometry.subtitle" = "Kształt i odstępy szkła klawiatury.";
 "prefs.control.keyboard_overhang" = "Nawis";
 "prefs.subtitle.keyboard_overhang" = "Dodatkowa wysokość zarezerwowana nad klawiaturą, gdy pasek predykcji jest ukryty.";
+
+"prefs.misc.exit_safe_mode.title" = "Wyjdź z trybu bezpiecznego";
+"prefs.misc.exit_safe_mode.subtitle" = "Wyjdź z trybu bezpiecznego Liquid (Gl)ass, jeśli jest aktywny.";
+"prefs.control.keyboard_key_radius" = "Promień zaokrąglenia klawiszy";
+"prefs.subtitle.keyboard_key_radius" = "Promień zaokrąglenia używany podczas renderowania klawiszy klawiatury.";
+"prefs.misc.debug_logging.title" = "Rejestrowanie debugowania";
+"prefs.misc.debug_logging.subtitle" = "Zapisuje szczegółowe informacje diagnostyczne w pliku liquidglass.log. Pozostaw wyłączone, chyba że rozwiązujesz problemy.";
+"prefs.misc.export_logs.title" = "Eksportuj logi";
+"prefs.export_logs.none" = "Nie znaleziono zapisanych logów.";
+
+/* TODO: Translate synced English fallback strings. */
+"prefs.control.bezel_width" = "Bezel Width";
+"prefs.subtitle.bezel_width" = "Width of the refracting edge around the clock glyphs, in points.";
+"prefs.section.lockscreen_date_label.title" = "Date Label";
+"prefs.section.lockscreen_date_label.subtitle" = "Customize the lockscreen date text.";
+"prefs.control.date_format_enabled" = "Custom Date Format";
+"prefs.subtitle.date_format_enabled" = "Replace the lockscreen date with a custom date format.";
+"prefs.control.date_format" = "Format";
+"prefs.subtitle.date_format" = "Uses Unicode date pattern syntax, for example EEE MMM d.";

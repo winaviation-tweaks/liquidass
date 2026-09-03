@@ -19,10 +19,21 @@ static BOOL LGIsPlatterMaterial(UIView *material) {
     return !LGHasMaterialAncestorBefore(material, @"PLPlatterView");
 }
 
+static UIView *LGPlatterActionButtonAncestor(UIView *material) {
+    Class materialClass = NSClassFromString(@"MTMaterialView");
+    for (UIView *v = material.superview; v; v = v.superview) {
+        NSString *name = NSStringFromClass(v.class);
+        if ([name isEqualToString:@"PLPlatterActionButton"] ||
+            [name isEqualToString:@"NCNotificationListCellActionButton"])
+            return v;
+        if (materialClass && [v isKindOfClass:materialClass]) return nil;
+    }
+    return nil;
+}
+
 static BOOL LGIsPlatterActionMaterial(UIView *material) {
-    if (!hasAncestorOfClassName(material, @"PLPlatterActionButton")) return NO;
     if (hasAncestorOfClassName(material, @"SBSwitcherAppSuggestionBannerView")) return NO;
-    return !LGHasMaterialAncestorBefore(material, @"PLPlatterActionButton");
+    return LGPlatterActionButtonAncestor(material) != nil;
 }
 
 static BOOL LGResponderChainContainsClass(UIResponder *responder, NSString *name) {
@@ -42,18 +53,25 @@ static BOOL LGIsTopBannerPresentation(UIView *view) {
     return LGResponderChainContainsClass(view, @"SBNotificationPresentableViewController");
 }
 
-static BOOL LGIsLightLockscreenNotificationView(UIView *view) {
-    if (!view || LGIsTopBannerPresentation(view)) return NO;
-    if (view.traitCollection.userInterfaceStyle != UIUserInterfaceStyleLight) return NO;
-    return hasAncestorOfClassName(view, @"NCNotificationShortLookView") ||
-           hasAncestorOfClassName(view, @"NCNotificationLongLookView") ||
-           hasAncestorOfClassName(view, @"PLPlatterView");
+static UIView *LGNotificationAncestor(UIView *view) {
+    for (UIView *ancestor = view; ancestor; ancestor = ancestor.superview) {
+        NSString *name = NSStringFromClass(ancestor.class);
+        if ([name isEqualToString:@"NCNotificationShortLookView"] ||
+            [name isEqualToString:@"NCNotificationLongLookView"] ||
+            [name isEqualToString:@"PLPlatterView"]) return ancestor;
+    }
+    return nil;
 }
 
 static UIColor *LGForcedPlatterTextColor(UIView *view) {
-    if (!view || view.traitCollection.userInterfaceStyle != UIUserInterfaceStyleLight) return nil;
-    if (LGIsTopBannerPresentation(view)) return UIColor.blackColor;
-    return LGIsLightLockscreenNotificationView(view) ? UIColor.whiteColor : nil;
+    if (!view) return nil;
+    if (LGIsTopBannerPresentation(view))
+        return lgHostEnabled(@"Banner") &&
+               view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight
+            ? UIColor.blackColor : nil;
+    if (!lgHostEnabled(@"Notification") || !LGNotificationAncestor(view)) return nil;
+    return [LGGlassPreferenceValue(@"Notification.LabelColor") isEqual:@"black"]
+        ? UIColor.blackColor : UIColor.whiteColor;
 }
 
 static NSAttributedString *LGAttributedTextWithColor(NSAttributedString *text, UIColor *color) {
@@ -84,12 +102,7 @@ static void LGDisableLockscreenStackDimming(id controller) {
 }
 
 static CGFloat LGActionButtonRadius(UIView *material) {
-    UIView *button = material;
-    for (UIView *v = material; v; v = v.superview)
-        if ([NSStringFromClass(v.class) isEqualToString:@"PLPlatterActionButton"]) {
-            button = v;
-            break;
-        }
+    UIView *button = LGPlatterActionButtonAncestor(material) ?: material;
     if (button.layer.cornerRadius > 0.5) return button.layer.cornerRadius;
     if (material.layer.cornerRadius > 0.5) return material.layer.cornerRadius;
     return CGRectGetHeight(button.bounds) * 0.5;

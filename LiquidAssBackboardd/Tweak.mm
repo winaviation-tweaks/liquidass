@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #import "../Shared/LGHostRegistry.h"
+#import "../Shared/LGLensRectState.h"
 #import "LGSymbolResolver.h"
 #import "../Shared/LGCoverSheetState.h"
 #include <stdio.h>
@@ -10,7 +11,11 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <sys/sysctl.h>
 
 #if __has_include(<roothide.h>)
 #include <roothide.h>
@@ -20,12 +25,201 @@
 #endif
 #endif
 
-// backboardd can write here outside its temporary path
+// apparently the only path backboardd could write to outside /tmp/ or /var/jb/*
 #define LG_LOG_PATH "/var/mobile/Library/Accessibility/liquidglass.log"
+#define LG_SAFE_MODE_LOG_PATH "/var/mobile/Library/Accessibility/liquidass-safemode.log"
+#define LG_SAFE_MODE_STATE_PATH "/var/mobile/Library/Accessibility/liquidass-backboardd-guard.bin"
+#define LG_SAFE_MODE_PENDING_PATH "/var/mobile/Library/Accessibility/liquidass-backboardd-alert"
+#define LG_GAUSSIAN_IDENTITY_STATE_PATH "/var/mobile/Library/Accessibility/liquidass-gaussian-identity-state.bin"
+
+static CFStringRef const kLGSafeModeNotification =
+    CFSTR("dylv.liquidass/BackboarddSafeMode");
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    int64_t bootTime;
+    uint64_t lastStartMilliseconds;
+    uint32_t rapidStarts;
+    uint32_t disabled;
+} LGSafeModeState;
+
+static const uint32_t kLGSafeModeMagic = 0x4c47534d;
+static const uint32_t kLGSafeModeVersion = 1;
+static const uint64_t kLGSafeModeRapidWindowMilliseconds = 60000;
+static const int64_t kLGSafeModeHealthyDelayNanoseconds = 45LL * NSEC_PER_SEC;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t fingerprint;
+    uint32_t mode;
+} LGGaussianIdentityState;
+
+static const uint32_t kLGGaussianIdentityMagic = 0x4c474749;
+static const uint32_t kLGGaussianIdentityVersion = 1;
+static const uint32_t kLGGaussianIdentityProbe = 0;
+static const uint32_t kLGGaussianIdentityDisabled = 1;
+static const uint32_t kLGGaussianHookProbe = 2;
+
+static uint64_t lgGaussianIdentityFingerprint(void *entry) {
+    if (!entry) return 0;
+    const uint8_t *bytes = (const uint8_t *)entry;
+    uint64_t hash = 1469598103934665603ULL;
+    for (size_t i = 0; i < 32; i++) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static bool lgReadGaussianIdentityState(LGGaussianIdentityState *state) {
+    if (!state) return false;
+    int fd = open(LG_GAUSSIAN_IDENTITY_STATE_PATH, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    ssize_t count = read(fd, state, sizeof(*state));
+    close(fd);
+    return count == (ssize_t)sizeof(*state)
+        && state->magic == kLGGaussianIdentityMagic
+        && state->version == kLGGaussianIdentityVersion
+        && (state->mode == kLGGaussianIdentityProbe
+            || state->mode == kLGGaussianIdentityDisabled);
+}
+
+static void lgRemoveGaussianIdentityState(void) {
+    unlink(LG_GAUSSIAN_IDENTITY_STATE_PATH);
+}
+
+static bool lgWriteGaussianIdentityState(uint64_t fingerprint, uint32_t mode) {
+    LGGaussianIdentityState state = {
+        kLGGaussianIdentityMagic,
+        kLGGaussianIdentityVersion,
+        fingerprint,
+        mode,
+    };
+    char temporaryPath[PATH_MAX] = {};
+    snprintf(temporaryPath, sizeof(temporaryPath), "%s.%d.tmp",
+             LG_GAUSSIAN_IDENTITY_STATE_PATH, getpid());
+    int fd = open(temporaryPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return false;
+    ssize_t count = write(fd, &state, sizeof(state));
+    if (count == (ssize_t)sizeof(state)) fsync(fd);
+    close(fd);
+    if (count != (ssize_t)sizeof(state)
+        || rename(temporaryPath, LG_GAUSSIAN_IDENTITY_STATE_PATH) != 0) {
+        unlink(temporaryPath);
+        return false;
+    }
+    return true;
+}
+
+static int64_t lgBootTimeSeconds(void) {
+    struct timeval bootTime = {};
+    size_t size = sizeof(bootTime);
+    int mib[2] = { CTL_KERN, KERN_BOOTTIME };
+    if (sysctl(mib, 2, &bootTime, &size, NULL, 0) != 0) return 0;
+    return (int64_t)bootTime.tv_sec;
+}
+
+static uint64_t lgMonotonicMilliseconds(void) {
+    struct timespec now = {};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * 1000ULL + (uint64_t)now.tv_nsec / 1000000ULL;
+}
+
+static bool lgReadSafeModeState(LGSafeModeState *state) {
+    if (!state) return false;
+    int fd = open(LG_SAFE_MODE_STATE_PATH, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    ssize_t count = read(fd, state, sizeof(*state));
+    close(fd);
+    return count == (ssize_t)sizeof(*state)
+        && state->magic == kLGSafeModeMagic
+        && state->version == kLGSafeModeVersion;
+}
+
+static bool lgWriteSafeModeState(const LGSafeModeState *state) {
+    if (!state) return false;
+    char temporaryPath[PATH_MAX] = {};
+    snprintf(temporaryPath, sizeof(temporaryPath), "%s.%d.tmp",
+             LG_SAFE_MODE_STATE_PATH, getpid());
+    int fd = open(temporaryPath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return false;
+    ssize_t count = write(fd, state, sizeof(*state));
+    if (count == (ssize_t)sizeof(*state)) fsync(fd);
+    close(fd);
+    if (count != (ssize_t)sizeof(*state)
+        || rename(temporaryPath, LG_SAFE_MODE_STATE_PATH) != 0) {
+        unlink(temporaryPath);
+        return false;
+    }
+    return true;
+}
+
+static void lgWriteSafeModeNotice(uint32_t starts) {
+    int fd = open(LG_SAFE_MODE_LOG_PATH,
+                  O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        char line[192] = {};
+        int length = snprintf(line, sizeof(line),
+            "liquidass disabled its backboardd hooks after %u rapid starts\n", starts);
+        if (length > 0) write(fd, line, (size_t)length);
+        close(fd);
+    }
+
+    int pending = open(LG_SAFE_MODE_PENDING_PATH,
+                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (pending >= 0) close(pending);
+    CFNotificationCenterPostNotification(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        kLGSafeModeNotification, NULL, NULL, true);
+}
+
+static bool lgShouldEnterSafeMode(void) {
+    int64_t bootTime = lgBootTimeSeconds();
+    uint64_t now = lgMonotonicMilliseconds();
+    LGSafeModeState state = {};
+    bool valid = lgReadSafeModeState(&state);
+    if (!valid || !bootTime || state.bootTime != bootTime) {
+        state = {};
+        state.magic = kLGSafeModeMagic;
+        state.version = kLGSafeModeVersion;
+        state.bootTime = bootTime;
+    }
+
+    if (state.disabled) return true;
+
+    bool rapid = state.lastStartMilliseconds > 0
+        && now >= state.lastStartMilliseconds
+        && now - state.lastStartMilliseconds <= kLGSafeModeRapidWindowMilliseconds;
+    state.rapidStarts = rapid ? state.rapidStarts + 1 : 1;
+    state.lastStartMilliseconds = now;
+    if (state.rapidStarts >= 3) {
+        state.disabled = 1;
+        lgWriteSafeModeState(&state);
+        lgWriteSafeModeNotice(state.rapidStarts);
+        return true;
+    }
+
+    lgWriteSafeModeState(&state);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 kLGSafeModeHealthyDelayNanoseconds),
+                   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        LGSafeModeState healthy = {};
+        if (!lgReadSafeModeState(&healthy)) return;
+        if (healthy.bootTime != bootTime || healthy.disabled) return;
+        healthy.rapidStarts = 0;
+        healthy.lastStartMilliseconds = 0;
+        lgWriteSafeModeState(&healthy);
+    });
+    return false;
+}
+
+bool gLGBackboardDebugLogging = false;
 
 static void lglog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void lglog(const char *fmt, ...) {
-#if LIQUIDASS_DEBUG
+    if (!gLGBackboardDebugLogging) return;
     FILE *f = fopen(LG_LOG_PATH, "a");
     if (!f) return;
     struct timeval tv; gettimeofday(&tv, NULL);
@@ -35,9 +229,6 @@ static void lglog(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
     fputc('\n', f);
     fclose(f);
-#else
-    (void)fmt;
-#endif
 }
 #import <simd/simd.h>
 #import <mach-o/dyld.h>
@@ -94,6 +285,9 @@ typedef struct {
     simd_float2 samplingTransformOffset;
     float       samplingOrientation;
     float       backdropZoom;
+    float       shapeScale;
+    simd_float2 shapeOrigin;
+    simd_float2 shapeSize;
     float       useGlyphMask;
     float       dispersionStrength;
     float       fresnelGlareStrength;
@@ -146,6 +340,9 @@ typedef void (*MSHookFunctionFn)(void *, void *, void **);
 static MSHookFunctionFn g_hookFunction = nullptr;
 static bool             g_useHookPath = false;
 static bool             g_legacyRenderABI = false;
+static bool             g_skipGaussianIdentityHook = false;
+static bool             g_skipGaussianEdgeHook = false;
+static bool             g_skipGaussianRenderHook = false;
 static thread_local bool g_inLegacyRender = false;
 static thread_local simd_float2 g_legacyRenderOffset = { 0.0f, 0.0f };
 static std::unordered_set<uint32_t> g_customAtoms;
@@ -165,6 +362,8 @@ static const char *kForceHookPath =
 static id<MTLLibrary>              g_shaderLibrary = nil;
 static id<MTLBuffer>               g_uniformsBuf  = nil;
 static std::unordered_map<NSUInteger, id<MTLRenderPipelineState>> *g_renderPipelines = nullptr;
+static id<MTLComputePipelineState> g_blurPipeline = nil;
+static NSMutableDictionary<NSString *, NSArray<id<MTLTexture>> *> *g_blurTextures = nil;
 static id<MTLTexture>              g_clockMaskTexture = nil;
 static NSData                     *g_clockMaskData = nil;
 static uint32_t                    g_clockMaskWidth = 0;
@@ -173,15 +372,16 @@ static float                       g_clockMaskImageScale = 1.0f;
 static float                       g_clockMaskBezelWidthPoints = 24.0f;
 static uint64_t                    g_clockMaskGeneration = 0;
 static uint64_t                    g_clockMaskUploadedGeneration = 0;
+static void                       *g_clockSharedMaskMapping = MAP_FAILED;
+static size_t                      g_clockSharedMaskMappingSize = 0;
 
 static os_unfair_lock g_pipelineLock = OS_UNFAIR_LOCK_INIT;
 static os_unfair_lock g_clockMaskLock = OS_UNFAIR_LOCK_INIT;
 static bool           g_pipelineInit = false;
+static NSInteger      g_osMajorVersion = 0;
 
-static NSString * const kClockMaskPath =
-    @"/var/mobile/Library/Accessibility/liquidglass-clock-mask.bin";
-static CFStringRef const kClockMaskReloadNotification =
-CFSTR("dylv.liquidglass/ClockMaskReload");
+static const char *kClockSharedMaskPath =
+    "/var/mobile/Library/Accessibility/liquidglass-clock-mask-shared.bin";
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -192,13 +392,33 @@ typedef struct __attribute__((packed)) {
     uint64_t generation;
 } LGClockMaskHeader;
 
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint64_t capacity;
+    uint64_t sequence;
+    uint64_t generation;
+    uint32_t width;
+    uint32_t height;
+    uint64_t pixelBytes;
+    float imageScale;
+    float bezelWidthPoints;
+} LGClockSharedMaskHeader;
+
 // clear arc globals before cxa finalization
 __attribute__((destructor))
 static void liquidGlassShutdown(void) {
     g_shaderLibrary = nil;
     g_uniformsBuf  = nil;
+    g_blurPipeline = nil;
+    g_blurTextures = nil;
     g_clockMaskTexture = nil;
     g_clockMaskData = nil;
+    if (g_clockSharedMaskMapping != MAP_FAILED) {
+        munmap(g_clockSharedMaskMapping, g_clockSharedMaskMappingSize);
+        g_clockSharedMaskMapping = MAP_FAILED;
+        g_clockSharedMaskMappingSize = 0;
+    }
 }
 
 static const char *kShaderSrc = R"MSL(
@@ -223,55 +443,73 @@ struct Uniforms {
     float2 samplingTransformOffset;
     float  samplingOrientation;
     float  backdropZoom;
+    float  shapeScale;
+    float2 shapeOrigin;
+    float2 shapeSize;
     float  useGlyphMask;
     float  dispersionStrength;
     float  fresnelGlareStrength;
     float4 tintColor;
 };
 
-float surfaceConvexSquircle(float x) {
-    return pow(1.0 - pow(1.0 - x, 4.0), 0.25);
+kernel void lgGaussianBlur(texture2d<float, access::sample> source [[texture(0)]],
+                           texture2d<float, access::write> destination [[texture(1)]],
+                           constant float2 &direction [[buffer(0)]],
+                           constant float &sigmaValue [[buffer(1)]],
+                           uint2 gid [[thread_position_in_grid]]) {
+    uint width = destination.get_width();
+    uint height = destination.get_height();
+    if (gid.x >= width || gid.y >= height) return;
+
+    constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
+    float sigma = max(sigmaValue, 0.5);
+    int sampleRadius = min(24, int(ceil(sigma * 3.0)));
+    float2 textureSize = float2(source.get_width(), source.get_height());
+    float2 center = (float2(gid) + 0.5) / float2(width, height);
+    float4 sum = float4(0.0);
+    float totalWeight = 0.0;
+    for (int offset = -sampleRadius; offset <= sampleRadius; offset++) {
+        float sampleOffset = float(offset);
+        float weight = exp(-(sampleOffset * sampleOffset) / (2.0 * sigma * sigma));
+        float2 uv = center + direction * (sampleOffset / textureSize);
+        sum += source.sample(linearSampler, uv) * weight;
+        totalWeight += weight;
+    }
+    destination.write(sum / max(totalWeight, 0.0001), gid);
 }
 
-float2 refractRay(float2 normal, float eta) {
-    float cosI = -normal.y;
-    float k    = 1.0 - eta * eta * (1.0 - cosI * cosI);
-    if (k < 0.0) return float2(0.0);
-    float sq = sqrt(k);
-    return float2(-(eta * cosI + sq) * normal.x,
-                    eta - (eta * cosI + sq) * normal.y);
+float quartzGlassEdgeProfile(float distanceFromEdge,
+                             float refractionHeight) {
+    float t = saturate(distanceFromEdge / max(refractionHeight, 0.001));
+    return 1.0 - sqrt(t * (2.0 - t));
 }
 
-float rawRefraction(float br, float gt, float bw, float eta) {
-    float x  = clamp(br, 0.05, 0.95);
-    float y  = surfaceConvexSquircle(x);
-    float y2 = surfaceConvexSquircle(x + 0.001);
-    float d  = (y2 - y) / 0.001;
-    float m  = sqrt(d * d + 1.0);
-    float2 n = float2(-d / m, -1.0 / m);
-    float2 r = refractRay(n, eta);
-    if (length(r) < 0.0001 || abs(r.y) < 0.0001) return 0.0;
-    return r.x * (y * bw + gt) / r.y;
-}
+float quartzGlassHighlight(float distanceFromEdge,
+                           float bezelWidth,
+                           float2 surfaceNormal,
+                           float strength,
+                           float angle) {
+    float normalLength = max(length(surfaceNormal), 0.001);
+    float2 normal = surfaceNormal / normalLength;
+    float ringWidth = clamp(bezelWidth * 0.24, 1.0, 2.5);
+    float aa = 1.0;
 
-float displacementAtRatio(float br, float gt, float bw, float eta) {
-    float peak = rawRefraction(0.05, gt, bw, eta);
-    if (abs(peak) < 0.0001) return 0.0;
-    float raw = rawRefraction(br, gt, bw, eta);
-    return (raw / peak) * (1.0 - smoothstep(0.0, 1.0, br));
-}
+    float outerCoverage = saturate(distanceFromEdge / aa + 0.5);
+    float innerCoverage = saturate((ringWidth - distanceFromEdge) / aa + 0.5);
+    float ring = outerCoverage * innerCoverage;
+    float radial = saturate(distanceFromEdge / ringWidth);
+    ring *= 1.0 - radial;
 
-float fresnelAtRatio(float br, float refractiveIndex) {
-    float x = clamp(br, 0.02, 0.98);
-    float y0 = surfaceConvexSquircle(max(0.001, x - 0.001));
-    float y1 = surfaceConvexSquircle(min(0.999, x + 0.001));
-    float slope = (y1 - y0) / 0.002;
-    float cosTheta = rsqrt(1.0 + slope * slope);
-    float f0Base = (refractiveIndex - 1.0) / (refractiveIndex + 1.0);
-    float f0 = f0Base * f0Base;
-    float grazing = pow(1.0 - clamp(cosTheta, 0.0, 1.0), 5.0);
-    float fresnel = f0 + (1.0 - f0) * grazing;
-    return fresnel * (1.0 - smoothstep(0.0, 1.0, br));
+    float2 lightDirection = float2(cos(angle), sin(angle));
+    float threshold = 0.15;
+    float directional = saturate((dot(lightDirection, normal) - threshold) /
+                                 max(1.0 - threshold, 0.0001));
+    float highlight = ring * directional;
+
+    float oppositeAttenuation = 1.35;
+    highlight /= max(1.0 + (1.0 - highlight) * oppositeAttenuation,
+                     0.0001);
+    return highlight * max(strength, 0.0);
 }
 
 float linearize(float c) {
@@ -324,19 +562,12 @@ float bottomRoundedBoxDistance(float2 point, float2 size, float radius) {
          + length(max(q, float2(0.0))) - selectedRadius;
 }
 
-constant float kDispersionRedIndex   = 0.98;
-constant float kDispersionGreenIndex = 1.00;
-constant float kDispersionBlueIndex  = 1.02;
-
-float dispersionOffsetScale(float channelIndex, float strength) {
-    return 1.0 - (channelIndex - 1.0) * strength;
-}
-
 float2 backdropSampleUV(float2 capturePx,
                         float2 logicalPx,
                         float2 displacementPx,
                         bool isCoverSheet,
-                        constant Uniforms &u)
+                        constant Uniforms &u,
+                        float zoomMix)
 {
     float2 sampleUV;
     if (isCoverSheet) {
@@ -356,7 +587,15 @@ float2 backdropSampleUV(float2 capturePx,
     }
 
     float zoom = max(u.backdropZoom, 0.01);
-    sampleUV = float2(0.5) + (sampleUV - float2(0.5)) / zoom;
+    if (u.shapeSize.x > 0.5 && u.shapeSize.y > 0.5) {
+        float eased = mix(1.0, zoom, clamp(zoomMix, 0.0, 1.0));
+        float2 centre = (u.shapeOrigin + u.shapeSize * 0.5) / u.resolution;
+        sampleUV.y = centre.y + (sampleUV.y - centre.y) / eased;
+    } else if (clamp(u.shapeScale, 0.05, 1.0) < 0.999) {
+        sampleUV.y = 0.5 + (sampleUV.y - 0.5) / zoom;
+    } else {
+        sampleUV = float2(0.5) + (sampleUV - float2(0.5)) / zoom;
+    }
     return clamp(sampleUV, 0.0, 1.0);
 }
 
@@ -398,6 +637,8 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
     float distFromSide;
     float2 dir;
     float edgeOpacity;
+    bool subShape = false;
+    float cornerBlend = 0.0;
     if (u.useGlyphMask > 0.5) {
 
         float bestDistance = bezel + 1.0;
@@ -441,10 +682,29 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
 
         R = clamp(R, 0.0, shortest * 0.5);
 
-        float2 lensPx = px - (isCoverSheet ? u.lensOrigin : float2(0.0));
+        float shapeScale = clamp(u.shapeScale, 0.05, 1.0);
+        float2 shapeInset = float2(0.0);
+        if (u.shapeSize.x > 0.5 && u.shapeSize.y > 0.5) {
+            subShape = true;
+            shapeInset = u.shapeOrigin;
+            fw = u.shapeSize.x;
+            fh = u.shapeSize.y;
+            shortest = min(fw, fh);
+            R = clamp(R, 0.0, shortest * 0.5);
+        } else if (shapeScale < 0.999) {
+            subShape = true;
+            shapeInset = float2(fw, fh) * (1.0 - shapeScale) * 0.5;
+            fw *= shapeScale;
+            fh *= shapeScale;
+            shortest = min(fw, fh);
+            R = clamp(R, 0.0, shortest * 0.5);
+        }
+
+        float2 lensPx = px - (isCoverSheet ? u.lensOrigin : shapeInset);
         float2 halfSize = float2(fw, fh) * 0.5;
         float2 p = lensPx - halfSize;
         float2 core;
+        cornerBlend = 0.0;
         if (isCoverSheet) {
 
             R = min(R, shortest * 0.5);
@@ -456,6 +716,7 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             float2 q = abs(p) - core;
             signedDistance = length(max(q, float2(0.0)))
                            + min(max(q.x, q.y), 0.0) - R;
+            cornerBlend = saturate(min(q.x, q.y) / max(R, 0.001));
         } else {
             constexpr float continuousCornerExtent = 1.528;
             float2 extent = min(float2(R * continuousCornerExtent), halfSize);
@@ -472,8 +733,12 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             } else {
                 signedDistance = (superLength - 1.0) * min(extent.x, extent.y);
             }
+            cornerBlend = saturate(min(q.x, q.y) /
+                                   max(min(extent.x, extent.y), 0.001));
         }
-        if (signedDistance > 1.0) return src.sample(s, captureUV);
+        if (signedDistance > 1.0) {
+            return subShape ? float4(0.0) : src.sample(s, captureUV);
+        }
 
         distFromSide = max(0.0, -signedDistance);
         float2 cornerDelta = max(abs(p) - core, float2(0.0));
@@ -491,8 +756,8 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
             normalDelta = float2(dx, dy);
         } else if (R < shortest * 0.49 && R >= 0.5 &&
             cornerDelta.x > 0.0 && cornerDelta.y > 0.0) {
-
-            normalDelta = sign(p) * pow(cornerDelta, float2(3.0));
+            float2 t = cornerDelta / max(cornerDelta.x + cornerDelta.y, 0.0001);
+            normalDelta = sign(p) * t;
         } else {
             float2 nearestCore = clamp(p, -core, core);
             normalDelta = p - nearestCore;
@@ -510,15 +775,22 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
         edgeOpacity = clamp(1.0 - max(0.0, signedDistance), 0.0, 1.0);
     }
 
-    if (R < shortest * 0.45 && distFromSide >= bezel) {
+    if (u.useGlyphMask < 0.5 && !isCoverSheet && R >= 0.5 && bezel > R) {
+        float cornerScale = R >= shortest * 0.49 ? R
+                                                 : min(R * 1.528, shortest * 0.5);
+        float taper = cornerBlend * cornerBlend * (3.0 - 2.0 * cornerBlend);
+        bezel = mix(bezel, min(bezel, cornerScale), taper);
+    }
+
+    if ((R < shortest * 0.45 || subShape) && distFromSide >= bezel) {
         float4 flat = src.sample(s, captureUV);
         flat.rgb = mix(flat.rgb, u.tintColor.rgb, u.tintColor.a);
         return flat;
     }
 
-    float bezelRatio = clamp(distFromSide / bezel, 0.0, 1.0);
-    float normDisp   = (distFromSide < bezel) ?
-        displacementAtRatio(bezelRatio, u.glassThickness, bezel, eta) : 0.0;
+    float normDisp = (distFromSide < bezel) ?
+        quartzGlassEdgeProfile(distFromSide,
+                               min(max(u.glassThickness, 1.0), bezel)) : 0.0;
 
     float2 textureDir = dir;
     if (isCoverSheet && coverOrientation == 2.0) {
@@ -535,9 +807,12 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
                   * u.refractionScale * edgeOpacity;
 
     float dispersion = clamp(u.dispersionStrength, 0.0, 20.0);
-    float greenScale = dispersionOffsetScale(kDispersionGreenIndex, dispersion);
-    float2 greenUV = backdropSampleUV(capturePx, px, dispPx * greenScale,
-                                      isCoverSheet, u);
+    constexpr float zoomRampSpan = 0.3;
+    float zoomMix = bezel > 0.001
+        ? clamp((1.0 - distFromSide / bezel) / zoomRampSpan, 0.0, 1.0) : 0.0;
+    zoomMix = zoomMix * zoomMix * (3.0 - 2.0 * zoomMix);
+    float2 greenUV = backdropSampleUV(capturePx, px, dispPx,
+                                      isCoverSheet, u, zoomMix);
     float4 greenSample = src.sample(s, greenUV);
 
     float4 fallback = float4(0.0);
@@ -551,34 +826,59 @@ float4 liquidGlassPixel(texture2d<float, access::sample> src,
 
     float4 bg = greenSample;
     if (dispersion > 0.001 && dot(dispPx, dispPx) > 0.0001) {
-        float redScale = dispersionOffsetScale(kDispersionRedIndex, dispersion);
-        float blueScale = dispersionOffsetScale(kDispersionBlueIndex, dispersion);
+        float2 aberrationPx = -textureDir * normDisp * dispersion * 8.0 * edgeOpacity;
+        float3 accumulated = float3(0.0);
+        float accumulatedAlpha = 0.0;
 
-        float2 redUV = backdropSampleUV(capturePx, px, dispPx * redScale,
-                                        isCoverSheet, u);
-        float2 blueUV = backdropSampleUV(capturePx, px, dispPx * blueScale,
-                                         isCoverSheet, u);
-        float4 redSample = src.sample(s, redUV);
-        float4 blueSample = src.sample(s, blueUV);
-
-        if (redSample.a < 0.01 || blueSample.a < 0.01) {
-            if (!loadedFallback) fallback = src.sample(s, captureUV);
-            if (redSample.a < 0.01) redSample = fallback;
-            if (blueSample.a < 0.01) blueSample = fallback;
+        for (int i = 0; i < 3; i++) {
+            float weight = 1.0 - float(i) / 3.0;
+            float2 uv = backdropSampleUV(capturePx, px,
+                                          dispPx + aberrationPx * weight,
+                                          isCoverSheet, u, zoomMix);
+            float4 sample = src.sample(s, uv);
+            if (sample.a < 0.01) {
+                if (!loadedFallback) {
+                    fallback = src.sample(s, captureUV);
+                    loadedFallback = true;
+                }
+                sample = fallback;
+            }
+            accumulated.r += sample.r * weight;
+            accumulated.g += sample.g * (1.0 - weight);
+            accumulatedAlpha += sample.a;
         }
 
-        bg.r = redSample.r;
-        bg.g = greenSample.g;
-        bg.b = blueSample.b;
-        bg.a = greenSample.a;
+        for (int i = 0; i < 4; i++) {
+            float weight = float(i) / 3.0;
+            float2 uv = backdropSampleUV(capturePx, px,
+                                          dispPx - aberrationPx * weight,
+                                          isCoverSheet, u, zoomMix);
+            float4 sample = src.sample(s, uv);
+            if (sample.a < 0.01) {
+                if (!loadedFallback) {
+                    fallback = src.sample(s, captureUV);
+                    loadedFallback = true;
+                }
+                sample = fallback;
+            }
+            accumulated.g += sample.g * (1.0 - weight);
+            accumulated.b += sample.b * weight;
+            accumulatedAlpha += sample.a;
+        }
+
+        bg.rgb = accumulated * float3(0.5, 1.0 / 3.0, 0.5);
+        bg.a = accumulatedAlpha / 7.0;
     }
 
     float3 outRGB = mix(bg.rgb, u.tintColor.rgb, u.tintColor.a);
-    float fresnel = fresnelAtRatio(bezelRatio, u.refractiveIndex) * edgeOpacity;
+    float highlight = quartzGlassHighlight(distFromSide, bezel, dir,
+                                           u.fresnelGlareStrength,
+                                           -0.78539816339) *
+                      edgeOpacity;
     float luminance = dot(outRGB, float3(0.2126, 0.7152, 0.0722));
-    float glare = clamp(fresnel * 0.70 * mix(0.40, 1.0, luminance), 0.0, 0.18)
-                * clamp(u.fresnelGlareStrength, 0.0, 1.0);
-    outRGB = 1.0 - (1.0 - outRGB) * (1.0 - glare);
+    highlight *= mix(0.32, 1.0, luminance);
+    highlight = min(highlight, 0.22);
+    outRGB = 1.0 - (1.0 - outRGB) * (1.0 - highlight);
     return float4(outRGB, edgeOpacity);
 }
 
@@ -666,44 +966,187 @@ renderPipelineForFormat(__unsafe_unretained id<MTLDevice> device, MTLPixelFormat
     return pipeline;
 }
 
-static void lgReloadClockMask(void) {
-    NSData *data = [NSData dataWithContentsOfFile:kClockMaskPath
-                                          options:NSDataReadingMappedIfSafe
-                                            error:nil];
-    if (data.length < sizeof(LGClockMaskHeader)) return;
-    LGClockMaskHeader header;
-    [data getBytes:&header length:sizeof(header)];
-    uint64_t pixelCount = (uint64_t)header.width * (uint64_t)header.height;
-    if (header.magic != 0x4c474333 || !header.width || !header.height ||
-        !isfinite(header.imageScale) || header.imageScale < 0.5f || header.imageScale > 4.0f ||
-        !isfinite(header.bezelWidthPoints) ||
-        header.bezelWidthPoints < 0.0f || header.bezelWidthPoints > 100.0f ||
-        pixelCount > SIZE_MAX ||
-        data.length != sizeof(header) + (NSUInteger)pixelCount) {
-        lglog("clock mask rejected bytes=%lu magic=0x%x dims=%ux%u",
-              (unsigned long)data.length, header.magic, header.width, header.height);
-        return;
-    }
+static id<MTLComputePipelineState>
+blurPipelineForDevice(__unsafe_unretained id<MTLDevice> device) {
+    ensurePipeline(device);
+    if (!g_shaderLibrary) return nil;
 
-    os_unfair_lock_lock(&g_clockMaskLock);
-    g_clockMaskData = data;
-    g_clockMaskWidth = header.width;
-    g_clockMaskHeight = header.height;
-    g_clockMaskImageScale = header.imageScale;
-    g_clockMaskBezelWidthPoints = header.bezelWidthPoints;
-    g_clockMaskGeneration++;
-    os_unfair_lock_unlock(&g_clockMaskLock);
+    os_unfair_lock_lock(&g_pipelineLock);
+    if (!g_blurPipeline) {
+        id<MTLFunction> function = [g_shaderLibrary newFunctionWithName:@"lgGaussianBlur"];
+        NSError *error = nil;
+        g_blurPipeline = [device newComputePipelineStateWithFunction:function error:&error];
+        if (!g_blurPipeline) {
+            lglog("blur pipeline failed: %s", error.localizedDescription.UTF8String);
+        } else {
+            lglog("owned gaussian blur pipeline ready");
+        }
+    }
+    id<MTLComputePipelineState> pipeline = g_blurPipeline;
+    os_unfair_lock_unlock(&g_pipelineLock);
+    return pipeline;
 }
 
-static void lgClockMaskDidChange(CFNotificationCenterRef center, void *observer,
-                                 CFStringRef name, const void *object,
-                                 CFDictionaryRef userInfo) {
-    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
-    @autoreleasepool { lgReloadClockMask(); }
+static NSArray<id<MTLTexture>> *
+blurTexturesForSource(__unsafe_unretained id<MTLTexture> source) {
+    if (!source || !g_blurTextures) return nil;
+    NSString *key = [NSString stringWithFormat:@"%p:%lu:%lu:%lu",
+                     source.device, (unsigned long)source.pixelFormat,
+                     (unsigned long)source.width, (unsigned long)source.height];
+
+    os_unfair_lock_lock(&g_pipelineLock);
+    NSArray<id<MTLTexture>> *textures = g_blurTextures[key];
+    if (!textures) {
+        MTLTextureDescriptor *descriptor =
+            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat
+                                                              width:source.width
+                                                             height:source.height
+                                                          mipmapped:NO];
+        descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        descriptor.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> horizontal = [source.device newTextureWithDescriptor:descriptor];
+        id<MTLTexture> vertical = [source.device newTextureWithDescriptor:descriptor];
+        if (horizontal && vertical) {
+            textures = @[horizontal, vertical];
+            g_blurTextures[key] = textures;
+        }
+    }
+    os_unfair_lock_unlock(&g_pipelineLock);
+    return textures;
+}
+
+static id<MTLTexture>
+encodeOwnedGaussianBlur(__unsafe_unretained id<MTLCommandBuffer> commandBuffer,
+                        __unsafe_unretained id<MTLTexture> source,
+                        float radius) {
+    if (g_osMajorVersion == 15) return source;
+    if (!commandBuffer || !source || radius <= 0.001f) return source;
+    id<MTLComputePipelineState> pipeline = blurPipelineForDevice(source.device);
+    NSArray<id<MTLTexture>> *textures = blurTexturesForSource(source);
+    if (!pipeline || textures.count != 2) return source;
+    if (source.width == 0 || source.height == 0) return source;
+
+    float sigma = fmaxf(0.5f, radius);
+    simd_float2 directions[2] = {
+        simd_make_float2(1.0f, 0.0f),
+        simd_make_float2(0.0f, 1.0f),
+    };
+    id<MTLTexture> passSource = source;
+
+    NSUInteger maxThreads = MAX((NSUInteger)1, pipeline.maxTotalThreadsPerThreadgroup);
+    NSUInteger threadWidth = MAX((NSUInteger)1, pipeline.threadExecutionWidth);
+    if (threadWidth > maxThreads) threadWidth = maxThreads;
+    NSUInteger threadHeight = MAX((NSUInteger)1, maxThreads / threadWidth);
+    MTLSize threadsPerGroup = MTLSizeMake(threadWidth, threadHeight, 1);
+    MTLSize groups = MTLSizeMake((source.width  + threadWidth  - 1) / threadWidth,
+                                 (source.height + threadHeight - 1) / threadHeight,
+                                 1);
+    if (groups.width == 0 || groups.height == 0) return source;
+
+    static bool sBlurEncodingFailed = false;
+    if (sBlurEncodingFailed) return source;
+    @try {
+        for (NSUInteger pass = 0; pass < 2; pass++) {
+            id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+            if (!encoder) return source;
+            [encoder setComputePipelineState:pipeline];
+            [encoder setTexture:passSource atIndex:0];
+            [encoder setTexture:textures[pass] atIndex:1];
+            [encoder setBytes:&directions[pass] length:sizeof(simd_float2) atIndex:0];
+            [encoder setBytes:&sigma length:sizeof(float) atIndex:1];
+            [encoder dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+            [encoder endEncoding];
+            passSource = textures[pass];
+        }
+    } @catch (NSException *exception) {
+        sBlurEncodingFailed = true;
+        lglog("gaussian blur encode threw (%s: %s) - disabling owned blur",
+              exception.name.UTF8String, exception.reason.UTF8String);
+        return source;
+    }
+    return passSource;
+}
+
+static bool lgEnsureClockSharedMaskMapping(void) {
+    if (g_clockSharedMaskMapping != MAP_FAILED) return true;
+    int fd = open(kClockSharedMaskPath, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return false;
+    }
+    struct stat info = {};
+    if (fstat(fd, &info) != 0 || info.st_size < (off_t)sizeof(LGClockSharedMaskHeader)) {
+        close(fd);
+        return false;
+    }
+    size_t mappingSize = (size_t)info.st_size;
+    void *mapping = mmap(NULL, mappingSize, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (mapping == MAP_FAILED) return false;
+    g_clockSharedMaskMapping = mapping;
+    g_clockSharedMaskMappingSize = mappingSize;
+    return true;
+}
+
+static void lgRefreshClockMaskFromSharedMemory(void) {
+    if (!lgEnsureClockSharedMaskMapping()) return;
+    LGClockSharedMaskHeader *shared =
+        (LGClockSharedMaskHeader *)g_clockSharedMaskMapping;
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        uint64_t firstSequence = __atomic_load_n(&shared->sequence, __ATOMIC_ACQUIRE);
+        if (!firstSequence || (firstSequence & 1)) return;
+
+        LGClockSharedMaskHeader snapshot = {};
+        memcpy(&snapshot, shared, sizeof(snapshot));
+        uint64_t pixelCount = (uint64_t)snapshot.width * (uint64_t)snapshot.height;
+        size_t available = g_clockSharedMaskMappingSize - sizeof(snapshot);
+        if (snapshot.magic != 0x4c474d34 || snapshot.version != 1 ||
+            !snapshot.width || !snapshot.height ||
+            snapshot.pixelBytes != pixelCount || snapshot.pixelBytes > available ||
+            snapshot.capacity < snapshot.pixelBytes ||
+            !isfinite(snapshot.imageScale) || snapshot.imageScale < 0.5f ||
+            snapshot.imageScale > 4.0f ||
+            !isfinite(snapshot.bezelWidthPoints) ||
+            snapshot.bezelWidthPoints < 0.0f || snapshot.bezelWidthPoints > 100.0f) {
+            return;
+        }
+
+        os_unfair_lock_lock(&g_clockMaskLock);
+        bool alreadyCurrent = g_clockMaskGeneration == snapshot.generation;
+        os_unfair_lock_unlock(&g_clockMaskLock);
+        if (alreadyCurrent) return;
+
+        LGClockMaskHeader legacyHeader = {
+            0x4c474333,
+            snapshot.width,
+            snapshot.height,
+            snapshot.imageScale,
+            snapshot.bezelWidthPoints,
+            snapshot.generation,
+        };
+        NSMutableData *data = [NSMutableData dataWithBytes:&legacyHeader
+                                                     length:sizeof(legacyHeader)];
+        [data appendBytes:(uint8_t *)g_clockSharedMaskMapping + sizeof(snapshot)
+                   length:(NSUInteger)snapshot.pixelBytes];
+
+        uint64_t secondSequence = __atomic_load_n(&shared->sequence, __ATOMIC_ACQUIRE);
+        if (firstSequence != secondSequence || (secondSequence & 1)) continue;
+
+        os_unfair_lock_lock(&g_clockMaskLock);
+        g_clockMaskData = data;
+        g_clockMaskWidth = snapshot.width;
+        g_clockMaskHeight = snapshot.height;
+        g_clockMaskImageScale = snapshot.imageScale;
+        g_clockMaskBezelWidthPoints = snapshot.bezelWidthPoints;
+        g_clockMaskGeneration = snapshot.generation;
+        os_unfair_lock_unlock(&g_clockMaskLock);
+        return;
+    }
 }
 
 static id<MTLTexture>
 lgClockMaskTexture(__unsafe_unretained id<MTLDevice> device) {
+    lgRefreshClockMaskFromSharedMemory();
     os_unfair_lock_lock(&g_clockMaskLock);
     if (!g_clockMaskData || !g_clockMaskWidth || !g_clockMaskHeight) {
         os_unfair_lock_unlock(&g_clockMaskLock);
@@ -743,8 +1186,6 @@ static const float kBezelWidthRatio   = kCornerRadiusRatio * 1.8f;
 
 static const float kMaxBezelPx        = 34.0f;
 
-static const float kCoverSheetMaxBezelPx = 96.0f;
-
 static void ensureUniforms(__unsafe_unretained id<MTLDevice> device, uint64_t w, uint64_t h) {
     if (g_uniformsBuf) return; // buffer itself only needs allocating once
 
@@ -766,10 +1207,12 @@ static void ensureUniforms(__unsafe_unretained id<MTLDevice> device, uint64_t w,
     u->samplingTransformOffset = simd_make_float2(0.f, 0.f);
     u->samplingOrientation     = 1.f;
     u->backdropZoom            = 1.f;
+    u->shapeScale              = 1.f;
+    u->shapeOrigin             = simd_make_float2(0.f, 0.f);
+    u->shapeSize               = simd_make_float2(0.f, 0.f);
     u->useGlyphMask            = 0.f;
     u->dispersionStrength      = 5.0f;
     u->fresnelGlareStrength    = 0.5f;
-
     lglog("uniforms buffer allocated (geometry refreshed per-frame)");
 }
 
@@ -815,6 +1258,8 @@ static LGHostParams g_hostParams[kHostCount];
 static uint32_t g_darkAtoms[kHostCount];
 static bool         g_hostParamsInit = false;
 static float        g_fresnelGlareStrength = 0.5f;
+static bool         g_coverSheetBezelRatioOverride = false;
+static float        g_coverSheetCornerRadiusPoints = 64.0f;
 
 struct LGRadiusRoute { int host; float radiusRatio; bool dark; };
 static std::unordered_map<uint32_t, LGRadiusRoute> g_radiusRoutes;
@@ -891,9 +1336,18 @@ static bool lgDecodeTintColor(NSString *hex, simd_float4 *out) {
 
 static void lgReloadHostPrefs(void) {
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
+    NSNumber *debugLogging = prefs[@"Debug.Logging.Enabled"];
+    gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
+        ? debugLogging.boolValue : false;
     NSNumber *fresnelStrength = prefs[@"Renderer.FresnelGlareStrength"];
     g_fresnelGlareStrength = [fresnelStrength isKindOfClass:NSNumber.class]
         ? fminf(1.0f, fmaxf(0.0f, fresnelStrength.floatValue)) : 0.5f;
+    g_coverSheetBezelRatioOverride = false;
+    g_coverSheetCornerRadiusPoints = 64.0f;
+    NSNumber *coverSheetCornerRadius = prefs[@"CoverSheet.CornerRadius"];
+    if ([coverSheetCornerRadius isKindOfClass:[NSNumber class]]) {
+        g_coverSheetCornerRadiusPoints = fmaxf(0.0f, coverSheetCornerRadius.floatValue);
+    }
     int overrides = 0;
     for (int i = 0; i < kHostCount; i++) {
         uint32_t keepAtom = g_hostParamsInit ? g_hostParams[i].atom : 0;
@@ -905,6 +1359,10 @@ static void lgReloadHostPrefs(void) {
         if (!prefs) continue;
         NSString *p = [NSString stringWithUTF8String:kHostDefaults[i].prefPrefix];
         NSNumber *v;
+        if (i == LGHostIdentifierCoverSheet) {
+            id storedBezelRatio = prefs[[p stringByAppendingString:@".BezelRatio"]];
+            g_coverSheetBezelRatioOverride = [storedBezelRatio isKindOfClass:[NSNumber class]];
+        }
         #define LG_OVR(field, key) \
             if ((v = prefs[[p stringByAppendingString:@"." key]]) && \
                 [v isKindOfClass:[NSNumber class]]) { g_hostParams[i].field = v.floatValue; overrides++; }
@@ -1024,24 +1482,60 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         ? radiusIt->second.radiusRatio : hp->radiusRatio;
     lu.radius          = radiusRatio * shortestF;
     float maxBezel = !strcmp(hp->prefPrefix, "CoverSheet")
-        ? kCoverSheetMaxBezelPx : kMaxBezelPx;
+        ? shortestF * 0.5f : kMaxBezelPx;
     lu.bezelWidth      = fminf(hp->bezelRatio * shortestF, maxBezel);
     lu.glassThickness     = hp->glassThickness;
     lu.refractionScale    = hp->refractionScale;
     lu.refractiveIndex    = hp->refractiveIndex;
     lu.dispersionStrength = hp->dispersionStrength;
-    lu.fresnelGlareStrength = g_fresnelGlareStrength;
+    lu.fresnelGlareStrength = !strcmp(hp->prefPrefix, "Clock")
+        ? g_fresnelGlareStrength : 0.0f;
     lu.tintColor          = darkTint ? simd_make_float4(hp->darkTintR, hp->darkTintG, hp->darkTintB, hp->darkTintStrength)
                                   : simd_make_float4(hp->tintR, hp->tintG, hp->tintB, hp->tintStrength);
 
     lu.backdropZoom    = !strcmp(hp->prefPrefix, "PrefsSwitch") ? 0.75f : 1.0f;
+    lu.shapeScale      = 1.0f;
+    if (!strcmp(hp->prefPrefix, "TabBarSelection")) {
+        LGLensRectSlot lens = {};
+        if (LGLensRectRead(LGLensRectSlotTabBarSelection, &lens)) {
+            lu.backdropZoom = 0.85f;
+            lu.shapeScale   = 1.0f;
+            lu.shapeOrigin  = simd_make_float2(lens.originXRatio * (float)w,
+                                               lens.originYRatio * (float)h);
+            lu.shapeSize    = simd_make_float2(lens.widthRatio  * (float)w,
+                                               lens.heightRatio * (float)h);
+            float shapeShortest = fminf(lu.shapeSize.x, lu.shapeSize.y);
+            lu.radius = radiusRatio * shapeShortest;
+            lu.bezelWidth = fminf(hp->bezelRatio * shapeShortest, kMaxBezelPx);
+        }
+    }
+
+    if (!strcmp(hp->prefPrefix, "PrefsSegment")) {
+        lu.backdropZoom = 0.70f;
+        LGLensRectSlot lens = {};
+        if (LGLensRectRead(LGLensRectSlotPrefsSegment, &lens)) {
+            lu.shapeScale  = 1.0f;
+            lu.shapeOrigin = simd_make_float2(lens.originXRatio * (float)w,
+                                              lens.originYRatio * (float)h);
+            lu.shapeSize   = simd_make_float2(lens.widthRatio  * (float)w,
+                                              lens.heightRatio * (float)h);
+            float shapeShortest = fminf(lu.shapeSize.x, lu.shapeSize.y);
+            lu.radius = radiusRatio * shapeShortest;
+            lu.bezelWidth = fminf(hp->bezelRatio * shapeShortest, kMaxBezelPx);
+        } else {
+            lu.shapeScale = 0.75f;
+            float shapeShortest = shortestF * lu.shapeScale;
+            lu.radius = radiusRatio * shapeShortest;
+            lu.bezelWidth = fminf(hp->bezelRatio * shapeShortest, kMaxBezelPx);
+        }
+
+    }
 
     id<MTLTexture> clockMask = nil;
     if (!strcmp(hp->prefPrefix, "Clock")) {
         clockMask = lgClockMaskTexture(device);
         lu.useGlyphMask = clockMask ? 1.f : 0.f;
         if (clockMask) {
-
             float maskPointWidth = (float)clockMask.width / g_clockMaskImageScale;
             float maskPointHeight = (float)clockMask.height / g_clockMaskImageScale;
             float pixelsPerPointX = maskPointWidth > 0.0f ? (float)w / maskPointWidth : 1.0f;
@@ -1052,7 +1546,8 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
     } else if (!strcmp(hp->prefPrefix, "CoverSheet")) {
 
         lu.useGlyphMask = -1.f;
-        lu.radius = 78.0f;
+        float coverSheetCornerRadiusPoints = g_coverSheetCornerRadiusPoints;
+        lu.radius = coverSheetCornerRadiusPoints * 2.0f;
         LGCoverSheetSharedState state = {};
         bool coverStateValid = LGCoverSheetReadSharedState(&state) && state.active;
         if (coverStateValid) {
@@ -1077,7 +1572,21 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
             }
             float pixelsPerPoint = state.pixelsPerPoint;
             if (pixelsPerPoint >= 1.0f && pixelsPerPoint <= 4.0f) {
-                lu.radius = 39.0f * pixelsPerPoint;
+                lu.radius = coverSheetCornerRadiusPoints * pixelsPerPoint;
+            }
+        }
+        if (!g_coverSheetBezelRatioOverride && coverStateValid &&
+            state.pixelsPerPoint >= 1.0f && state.pixelsPerPoint <= 4.0f && w > 0) {
+            float screenWidthPoints = (float)w / state.pixelsPerPoint;
+            float cornerRadiusPoints = lu.radius / state.pixelsPerPoint;
+            float dynamicBezelRatio = screenWidthPoints > 0.0f
+                ? cornerRadiusPoints / screenWidthPoints : 0.0f;
+            lu.bezelWidth = fminf(dynamicBezelRatio * (float)w, maxBezel);
+            static int sCoverBezelLogs = 0;
+            if (__sync_fetch_and_add(&sCoverBezelLogs, 1) < 12) {
+                lglog("coversheet-bezel default radius=%.2fpt screenWidth=%.2fpt ratio=%.5f px=%.2f",
+                      cornerRadiusPoints, screenWidthPoints, dynamicBezelRatio,
+                      lu.bezelWidth);
             }
         }
         static uint32_t sLastCoverOrientation = UINT32_MAX;
@@ -1177,6 +1686,9 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
         return;
     }
 
+    id<MTLTexture> glassSourceTexture =
+        encodeOwnedGaussianBlur(cmdBuf, origTex, hp->blur);
+
     id<MTLRenderPipelineState> renderPipeline =
         renderPipelineForFormat(device, destTex.pixelFormat);
     if (!renderPipeline) {
@@ -1191,7 +1703,7 @@ static void ourCustomRender13(void *self, void *filter, void *layer, void *ctx,
     id<MTLRenderCommandEncoder> enc = [cmdBuf renderCommandEncoderWithDescriptor:pass];
     if (!enc) { lglog("ourCustomRender13: nil render encoder"); return; }
     [enc setRenderPipelineState:renderPipeline];
-    [enc setFragmentTexture:origTex atIndex:0];
+    [enc setFragmentTexture:glassSourceTexture atIndex:0];
     [enc setFragmentTexture:clockMask atIndex:1];
     [enc setFragmentBytes:&lu length:sizeof(lu) atIndex:0];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1361,15 +1873,48 @@ static bool lgInstallGaussianHooks(void *identityEntry, void *edgeInfoEntry,
     g_hookFunction = lgResolveHookFunction();
     if (!g_hookFunction) return false;
 
-    void *identityTrampoline = nullptr;
     void *identityTarget = LGSymStripCode(identityEntry);
-    void *identityReplacement =
-        LGSymStripCode((void *)&ourGaussianIdentityHook);
-    lglog("hook: installing Gaussian identity target=%p replacement=%p",
-          identityTarget, identityReplacement);
-    g_hookFunction(identityTarget, identityReplacement, &identityTrampoline);
-    g_origGaussIdentity =
-        (IdentityFn)LGSymMakeCallable(identityTrampoline);
+    uint64_t identityFingerprint = lgGaussianIdentityFingerprint(identityTarget);
+    LGGaussianIdentityState identityState = {};
+    bool identityStateExists = access(LG_GAUSSIAN_IDENTITY_STATE_PATH, F_OK) == 0;
+    if (identityStateExists) {
+        g_skipGaussianIdentityHook = true;
+        g_skipGaussianEdgeHook = true;
+        g_skipGaussianRenderHook = true;
+        if (lgReadGaussianIdentityState(&identityState)
+            && identityState.mode == kLGGaussianIdentityProbe) {
+            lgWriteGaussianIdentityState(identityFingerprint,
+                                          kLGGaussianIdentityDisabled);
+        }
+        lglog("hook: identity probe failed previously; disabling identity hook (fingerprint=%llx)",
+              (unsigned long long)identityFingerprint);
+    } else {
+        g_skipGaussianIdentityHook = false;
+    }
+
+    if (g_skipGaussianIdentityHook) {
+        g_origGaussIdentity =
+            (IdentityFn)LGSymMakeCallable(identityEntry);
+        lglog("hook: skipping Gaussian identity hook after capability probe");
+    } else {
+        if (!lgWriteGaussianIdentityState(identityFingerprint,
+                                          kLGGaussianIdentityProbe)) {
+            g_skipGaussianIdentityHook = true;
+            g_origGaussIdentity =
+                (IdentityFn)LGSymMakeCallable(identityEntry);
+            lglog("hook: identity probe state unavailable; skipping identity hook");
+        } else {
+            void *identityTrampoline = nullptr;
+            void *identityReplacement =
+                LGSymStripCode((void *)&ourGaussianIdentityHook);
+            lglog("hook: installing Gaussian identity target=%p replacement=%p",
+                  identityTarget, identityReplacement);
+            g_hookFunction(identityTarget, identityReplacement, &identityTrampoline);
+            lgRemoveGaussianIdentityState();
+            g_origGaussIdentity =
+                (IdentityFn)LGSymMakeCallable(identityTrampoline);
+        }
+    }
     if (!g_origGaussIdentity) {
         lglog("hook: Gaussian identity trampoline unavailable");
         return false;
@@ -1377,30 +1922,58 @@ static bool lgInstallGaussianHooks(void *identityEntry, void *edgeInfoEntry,
 
     void *edgeTrampoline = nullptr;
     void *edgeTarget = LGSymStripCode(edgeInfoEntry);
-    void *edgeReplacement =
-        LGSymStripCode((void *)&ourGaussianEdgeInfoHook);
-    lglog("hook: installing Gaussian edge-info target=%p replacement=%p",
-          edgeTarget, edgeReplacement);
-    g_hookFunction(edgeTarget, edgeReplacement, &edgeTrampoline);
-    g_origGaussEdgeInfo =
-        (EdgeInfoFn)LGSymMakeCallable(edgeTrampoline);
+    if (g_skipGaussianEdgeHook) {
+        g_origGaussEdgeInfo = (EdgeInfoFn)LGSymMakeCallable(edgeInfoEntry);
+        lglog("hook: skipping Gaussian edge-info hook after capability probe");
+    } else if (!lgWriteGaussianIdentityState(
+                   lgGaussianIdentityFingerprint(edgeTarget),
+                   kLGGaussianHookProbe)) {
+        g_skipGaussianEdgeHook = true;
+        g_origGaussEdgeInfo = (EdgeInfoFn)LGSymMakeCallable(edgeInfoEntry);
+        lglog("hook: edge-info probe state unavailable; skipping hook");
+    } else {
+        void *edgeReplacement = LGSymStripCode((void *)&ourGaussianEdgeInfoHook);
+        lglog("hook: installing Gaussian edge-info target=%p replacement=%p",
+              edgeTarget, edgeReplacement);
+        g_hookFunction(edgeTarget, edgeReplacement, &edgeTrampoline);
+        lgRemoveGaussianIdentityState();
+        g_origGaussEdgeInfo = (EdgeInfoFn)LGSymMakeCallable(edgeTrampoline);
+    }
     if (!g_origGaussEdgeInfo) {
         lglog("hook: Gaussian edge-info trampoline unavailable");
         return false;
     }
 
-    void *trampoline = nullptr;
     void *target = LGSymStripCode(renderEntry);
-    void *replacement = LGSymStripCode(g_legacyRenderABI
-        ? (void *)&ourGaussianRender14Hook
-        : (void *)&ourGaussianRenderHook);
-    lglog("hook: installing Gaussian render target=%p replacement=%p",
-          target, replacement);
-    g_hookFunction(target, replacement, &trampoline);
-    if (g_legacyRenderABI)
-        g_origGaussR14 = (Render14Fn)LGSymMakeCallable(trampoline);
-    else
-        g_origGaussR13 = (Render13Fn)LGSymMakeCallable(trampoline);
+    void *trampoline = nullptr;
+    if (g_skipGaussianRenderHook) {
+        if (g_legacyRenderABI)
+            g_origGaussR14 = (Render14Fn)LGSymMakeCallable(renderEntry);
+        else
+            g_origGaussR13 = (Render13Fn)LGSymMakeCallable(renderEntry);
+        lglog("hook: skipping Gaussian render hook after capability probe");
+    } else if (!lgWriteGaussianIdentityState(
+                   lgGaussianIdentityFingerprint(target),
+                   kLGGaussianHookProbe)) {
+        g_skipGaussianRenderHook = true;
+        if (g_legacyRenderABI)
+            g_origGaussR14 = (Render14Fn)LGSymMakeCallable(renderEntry);
+        else
+            g_origGaussR13 = (Render13Fn)LGSymMakeCallable(renderEntry);
+        lglog("hook: render probe state unavailable; skipping hook");
+    } else {
+        void *replacement = LGSymStripCode(g_legacyRenderABI
+            ? (void *)&ourGaussianRender14Hook
+            : (void *)&ourGaussianRenderHook);
+        lglog("hook: installing Gaussian render target=%p replacement=%p",
+              target, replacement);
+        g_hookFunction(target, replacement, &trampoline);
+        lgRemoveGaussianIdentityState();
+        if (g_legacyRenderABI)
+            g_origGaussR14 = (Render14Fn)LGSymMakeCallable(trampoline);
+        else
+            g_origGaussR13 = (Render13Fn)LGSymMakeCallable(trampoline);
+    }
     lglog("hook: Gaussian trampolines identity=%p edge=%p renderRaw=%p render=%p ABI=%s",
           (void *)g_origGaussIdentity, (void *)g_origGaussEdgeInfo,
           trampoline,
@@ -1418,7 +1991,7 @@ static void lgRegisterCustomAtom(uint32_t atom, void *descriptor) {
     if (inserted) g_addFilter(atom, descriptor);
 }
 
-// registering before filter table exists breaks system blur
+// registering before filter table exists breaks system blur, this became a tweak btw check out https://github.com/winaviation-tweaks/Blurless
 static bool registerCustomFilter(void) {
     void **filterTableSlot = (void **)LGResolve_FilterTableSlot();
     if (!filterTableSlot) {
@@ -1623,11 +2196,23 @@ static bool registerCustomFilter(void) {
 __attribute__((constructor))
 static void tweakInit(void) {
     @autoreleasepool {
-#if LIQUIDASS_DEBUG
-    { FILE *lf = fopen(LG_LOG_PATH, "w"); if (lf) fclose(lf); }
-#endif
+    if (lgShouldEnterSafeMode()) return;
+    {
+        NSDictionary *bootPrefs =
+            [NSDictionary dictionaryWithContentsOfFile:lgPrefsPath()];
+        NSNumber *debugLogging = bootPrefs[@"Debug.Logging.Enabled"];
+        gLGBackboardDebugLogging = [debugLogging isKindOfClass:NSNumber.class]
+            ? debugLogging.boolValue : false;
+    }
+    if (gLGBackboardDebugLogging) {
+        FILE *lf = fopen(LG_LOG_PATH, "w"); if (lf) fclose(lf);
+    }
 
     NSOperatingSystemVersion osv = NSProcessInfo.processInfo.operatingSystemVersion;
+    g_skipGaussianIdentityHook = false;
+    g_skipGaussianEdgeHook = false;
+    g_skipGaussianRenderHook = false;
+    g_osMajorVersion = osv.majorVersion;
     g_legacyRenderABI = osv.majorVersion <= 14;
     lglog("===== LiquidGlass (backboardd) on iOS %ld.%ld.%ld =====",
           (long)osv.majorVersion, (long)osv.minorVersion, (long)osv.patchVersion);
@@ -1653,7 +2238,6 @@ static void tweakInit(void) {
           kIsPACSlice ? "arm64e/PAC" : "arm64/non-PAC",
           g_useHookPath ? "genuine-descriptor hook" : "cloned descriptor",
           (!kIsPACSlice && g_useHookPath) ? " (forced by marker)" : "");
-
     if (!LGSymResolverInit()) {
         lglog("init: LGSymResolverInit failed, QuartzCore not loaded yet?");
         return;
@@ -1683,12 +2267,7 @@ static void tweakInit(void) {
 
     g_renderPipelines =
         new std::unordered_map<NSUInteger, id<MTLRenderPipelineState>>();
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
-                                    NULL, lgClockMaskDidChange,
-                                    kClockMaskReloadNotification, NULL,
-                                    CFNotificationSuspensionBehaviorDeliverImmediately);
-    lgReloadClockMask();
-
+    g_blurTextures = [NSMutableDictionary dictionary];
     registerCustomFilter();
 
     lglog("ready");

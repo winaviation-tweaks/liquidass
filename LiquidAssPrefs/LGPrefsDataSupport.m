@@ -401,10 +401,10 @@ NSDictionary *LGGlassEnabledSetting(NSString *key, BOOL fallback) {
 }
 
 static const CGFloat kLGUniversalBlurMax = 50.0f;
-static const CGFloat kLGUniversalThicknessMax = 200.0f;
+static const CGFloat kLGUniversalThicknessMax = 500.0f;
 static const CGFloat kLGUniversalRefractiveIndexMax = 5.0f;
 static const CGFloat kLGUniversalRefractionMax = 5.0f;
-static const CGFloat kLGUniversalDispersionMax = 20.0f;
+static const CGFloat kLGUniversalDispersionMax = 10.0f;
 
 static NSDictionary *LGGlassBlurSetting(NSString *key, CGFloat fallback, CGFloat min, CGFloat max, NSInteger decimals);
 static NSDictionary *LGGlassThicknessSetting(NSString *key, CGFloat fallback, CGFloat min, CGFloat max, NSInteger decimals);
@@ -412,6 +412,15 @@ static NSDictionary *LGGlassRefractiveIndexSetting(NSString *key, CGFloat fallba
 static NSDictionary *LGGlassRefractionSetting(NSString *key, CGFloat fallback, CGFloat min, CGFloat max, NSInteger decimals);
 static NSDictionary *LGGlassSpecularSetting(NSString *key, CGFloat fallback, CGFloat min, CGFloat max, NSInteger decimals);
 static const CGFloat kLGUniversalQualityMax = 1.0f;
+static const CGFloat kLGCoverSheetCornerRadiusPoints = 64.0f;
+
+static CGFloat LGDefaultBezelRatioForHost(NSString *prefix, const LGHostDefinition *host) {
+    if (!host || ![prefix isEqualToString:@"CoverSheet"]) return host ? host->bezelRatio : 0.0;
+    CGFloat screenWidth = UIScreen.mainScreen.bounds.size.width;
+    CGFloat cornerRadius = LGReadPreference(@"CoverSheet.CornerRadius",
+                                            @(kLGCoverSheetCornerRadiusPoints)).doubleValue;
+    return screenWidth > 0.0 ? cornerRadius / screenWidth : host->bezelRatio;
+}
 
 NSArray<NSDictionary *> *LGRendererItemsForHostPrefix(NSString *prefix) {
     const LGHostDefinition *host = LGHostDefinitionForPreferencePrefix(prefix.UTF8String);
@@ -421,12 +430,19 @@ NSArray<NSDictionary *> *LGRendererItemsForHostPrefix(NSString *prefix) {
     };
     NSString *lightTint = [NSString stringWithUTF8String:host->lightTintHex];
     NSString *darkTint = [NSString stringWithUTF8String:host->darkTintHex];
+    CGFloat dispersionMax = LGHostIdentifierForDefinition(host) == LGHostIdentifierCoverSheet
+        ? kLGUniversalDispersionMax : 2.0f;
+    CGFloat bezelRatioDefault = LGDefaultBezelRatioForHost(prefix, host);
     BOOL enabledByDefault = ![prefix isEqualToString:@"AppIcons"];
-    return @[
+    NSMutableArray<NSDictionary *> *items = [NSMutableArray arrayWithArray:@[
         LGGlassEnabledSetting(key(@"Enabled"), enabledByDefault),
-        LGSliderSetting(key(@"BezelRatio"), LGLocalized(@"prefs.control.bezel_ratio"),
-                        LGLocalized(@"prefs.subtitle.bezel_ratio"),
-                        host->bezelRatio, 0.0, 1.0, 3),
+        [prefix isEqualToString:@"Clock"]
+            ? LGSliderSetting(key(@"BezelWidth"), LGLocalized(@"prefs.control.bezel_width"),
+                              LGLocalized(@"prefs.subtitle.bezel_width"),
+                              12.0, 1.0, 40.0, 1)
+            : LGSliderSetting(key(@"BezelRatio"), LGLocalized(@"prefs.control.bezel_ratio"),
+                              LGLocalized(@"prefs.subtitle.bezel_ratio"),
+                              bezelRatioDefault, 0.0, 1.0, 3),
         LGGlassThicknessSetting(key(@"GlassThickness"), host->glassThickness, 0.0, 220.0, 1),
         LGGlassRefractionSetting(key(@"RefractionScale"), host->refractionScale, 0.0, 5.0, 2),
         LGGlassRefractiveIndexSetting(key(@"RefractiveIndex"), host->refractiveIndex, 1.0, 3.0, 2),
@@ -437,7 +453,7 @@ NSArray<NSDictionary *> *LGRendererItemsForHostPrefix(NSString *prefix) {
         LGSliderSetting(key(@"DispersionStrength"),
                         LGLocalized(@"prefs.control.dispersion_strength"),
                         LGLocalized(@"prefs.subtitle.dispersion_strength"),
-                        host->dispersionStrength, 0.0, kLGUniversalDispersionMax, 1),
+                        host->dispersionStrength, 1.0, dispersionMax, 1),
         LGGlassSpecularSetting(key(@"SpecularOpacity"), host->specularOpacity, 0.0, 1.0, 2),
         LGGlassBlurSetting(key(@"Blur"), host->blur, 0.0, 50.0, 1),
         @{
@@ -449,7 +465,29 @@ NSArray<NSDictionary *> *LGRendererItemsForHostPrefix(NSString *prefix) {
             @"title": LGLocalized(@"prefs.control.dark_tint_color"),
             @"subtitle": LGLocalized(@"prefs.subtitle.dark_tint_color"), @"default": darkTint
         },
-    ];
+    ]];
+    if ([prefix isEqualToString:@"CoverSheet"]) {
+        [items insertObject:LGSliderSetting(key(@"CornerRadius"),
+                                            LGLocalized(@"prefs.control.corner_radius"),
+                                            LGLocalized(@"prefs.subtitle.corner_radius"),
+                                            LGReadPreference(@"CoverSheet.CornerRadius",
+                                                             @(kLGCoverSheetCornerRadiusPoints)).doubleValue,
+                                            0.0, 200.0, 1)
+                      atIndex:2];
+    }
+    if ([prefix isEqualToString:@"Notification"]) {
+        [items addObject:LGSettingControlledByKey(
+            LGMenuSetting(@"Notification.LabelColor",
+                          LGLocalized(@"prefs.notification.label_color.title"),
+                          LGLocalized(@"prefs.notification.label_color.subtitle"),
+                          @"white",
+                          @[
+                              @{ @"value": @"white", @"title": LGLocalized(@"prefs.color.white") },
+                              @{ @"value": @"black", @"title": LGLocalized(@"prefs.color.black") },
+                          ]),
+            @"Notification.Enabled", @YES)];
+    }
+    return [items copy];
 }
 
 BOOL LGPrefsItemIsVisible(NSDictionary *item) {
@@ -593,6 +631,10 @@ NSArray<NSDictionary *> *LGKeyboardItems(void) {
                             LGLocalized(@"prefs.control.corner_radius"),
                             LGLocalized(@"prefs.subtitle.corner_radius"),
                             LGKeyboardDefaultCornerRadius, 0.0, 60.0, 1),
+            LGSliderSetting(@"Keyboard.KeyRadius",
+                            LGLocalized(@"prefs.control.keyboard_key_radius"),
+                            LGLocalized(@"prefs.subtitle.keyboard_key_radius"),
+                            LGKeyboardDefaultKeyRadius, 0.0, 23.0, 1),
             LGSliderSetting(@"Keyboard.Overhang",
                             LGLocalized(@"prefs.control.keyboard_overhang"),
                             LGLocalized(@"prefs.subtitle.keyboard_overhang"),
@@ -666,6 +708,8 @@ static NSArray<NSDictionary *> *LGClockVariableFontItems(void) {
                                                                   LGLocalized(@"prefs.subtitle.variable_font"),
                                                                   YES) mutableCopy];
     variableFontEnabled[@"controls_following_panel"] = @YES;
+    variableFontEnabled[@"enabled_key"] = @"Clock.Enabled";
+    variableFontEnabled[@"enabled_default"] = @YES;
     return @[
         LGSpacerSetting(8.0, 0.0),
         variableFontEnabled.copy,
@@ -692,15 +736,44 @@ static NSArray<NSDictionary *> *LGClockVariableFontItems(void) {
     ];
 }
 
+static NSArray<NSDictionary *> *LGClockDateFormatItems(void) {
+    NSMutableDictionary *enabled =
+        [LGSwitchSetting(@"Lockscreen.Clock.DateFormat.Enabled",
+                         LGLocalized(@"prefs.control.date_format_enabled"),
+                         LGLocalized(@"prefs.subtitle.date_format_enabled"),
+                         YES) mutableCopy];
+    enabled[@"controls_following_panel"] = @YES;
+    return @[
+        LGSectionSetting(LGLocalized(@"prefs.section.lockscreen_date_label.title"),
+                         LGLocalized(@"prefs.section.lockscreen_date_label.subtitle")),
+        enabled.copy,
+        LGSettingControlledByKey(@{
+            @"type": @"string",
+            @"key": @"Lockscreen.Clock.DateFormat.Format",
+            @"title": LGLocalized(@"prefs.control.date_format"),
+            @"subtitle": LGLocalized(@"prefs.subtitle.date_format"),
+            @"default": @"",
+            @"placeholder": @"EEE MMM d",
+        }, @"Lockscreen.Clock.DateFormat.Enabled", @YES),
+    ];
+}
+
 NSArray<NSDictionary *> *LGClockItems(void) {
     return LGJoinItemGroups(@[
         LGRendererItemsForHostPrefix(@"Clock"),
         LGClockVariableFontItems(),
+        LGClockDateFormatItems(),
     ]);
 }
 
 NSArray<NSDictionary *> *LGTabBarItems(void) {
     return LGJoinItemGroups(@[
+        @[
+            LGKeyedNavSetting(@"TabBar.Exclusions",
+                              LGLocalized(@"prefs.tab_bar.exclusions.title"),
+                              LGLocalized(@"prefs.tab_bar.exclusions.subtitle"),
+                              @"editTabBarExclusions"),
+        ],
         LGRendererItemsForHostPrefix(@"TabBar"),
         @[
             LGSectionSetting(LGLocalized(@"prefs.surface.tab_bar_selection.title"), nil),
@@ -843,7 +916,7 @@ NSArray<NSDictionary *> *LGMoreOptionsItems(void) {
     [items addObject:LGSwitchSetting(@"Specular.Motion.Enabled",
                                      LGLocalized(@"prefs.control.motion_highlights"),
                                      LGLocalized(@"prefs.subtitle.motion_highlights"),
-                                     YES)];
+                                     NO)];
     [items addObject:LGSliderSetting(@"Specular.Motion.Sensitivity",
                                      LGLocalized(@"prefs.control.motion_highlights_sensitivity"),
                                      LGLocalized(@"prefs.subtitle.motion_highlights_sensitivity"),
@@ -860,6 +933,14 @@ NSArray<NSDictionary *> *LGMoreOptionsItems(void) {
     [items addObject:LGNavSetting(LGLocalized(@"prefs.misc.import_prefs.title"),
                                   LGLocalized(@"prefs.misc.import_prefs.subtitle"),
                                   @"importPreferences")];
+    [items addObject:LGSectionSetting(@"", @"")];
+    [items addObject:LGSwitchSetting(@"Debug.Logging.Enabled",
+                                     LGLocalized(@"prefs.misc.debug_logging.title"),
+                                     LGLocalized(@"prefs.misc.debug_logging.subtitle"),
+                                     NO)];
+    [items addObject:LGNavSetting(LGLocalized(@"prefs.misc.export_logs.title"),
+                                  @"",
+                                  @"exportLogs")];
 
     return [items copy];
 }

@@ -168,7 +168,7 @@ static void LGSettingsSwitchScheduleAutoContract(LGPrefsLiquidSwitch *self_) {
 }
 
 - (void)commonInit {
-    self.onTintColor = UIColor.clearColor;
+    self.onTintColor = UIColor.systemGreenColor;
     self.tintColor = UIColor.clearColor;
     self.thumbTintColor = UIColor.clearColor;
     self.backgroundColor = UIColor.clearColor;

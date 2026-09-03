@@ -156,6 +156,10 @@
 "prefs.global_controls.exclusions.subtitle" = "Skip custom controls in matching bundle IDs or executable names.";
 "prefs.global_controls.exclusions.body" = "Enter one bundle ID or executable name per line. Changes apply after reopening the affected app.";
 "prefs.global_controls.exclusions.placeholder" = "com.example.app\nExampleExecutable";
+"prefs.tab_bar.exclusions.title" = "Exclusion List";
+"prefs.tab_bar.exclusions.subtitle" = "Skip tab bars in matching bundle IDs or executable names.";
+"prefs.tab_bar.exclusions.body" = "Enter one bundle ID or executable name per line. Changes apply after reopening the affected app.";
+"prefs.tab_bar.exclusions.placeholder" = "com.example.app\nExampleExecutable";
 "prefs.global_controls.section.title" = "Custom Controls";
 "prefs.global_controls.section.subtitle" = "Choose which system controls are replaced across apps.";
 "prefs.global_controls.switches.title" = "Switches";
@@ -174,3 +178,24 @@
 "prefs.app_icons_warning.confirm" = "Enable";
 "prefs.control.fresnel_glare" = "Fresnel Glare";
 "prefs.subtitle.fresnel_glare" = "Controls the edge glare added by the glass shader.";
+
+"prefs.misc.debug_logging.title" = "Debug Logging";
+"prefs.misc.debug_logging.subtitle" = "Writes verbose diagnostics to liquidglass.log. Leave off unless you are troubleshooting.";
+
+/* TODO: Translate synced English fallback strings. */
+"prefs.misc.exit_safe_mode.title" = "Exit Safe Mode";
+"prefs.misc.exit_safe_mode.subtitle" = "Exit Liquid (Gl)ass safe mode if active.";
+"prefs.control.keyboard_key_radius" = "Key Corner Radius";
+"prefs.subtitle.keyboard_key_radius" = "Corner radius used when rendering keyboard keys.";
+"prefs.misc.export_logs.title" = "Export Logs";
+"prefs.export_logs.none" = "No saved logs were found.";
+
+/* TODO: Translate synced English fallback strings. */
+"prefs.control.bezel_width" = "Bezel Width";
+"prefs.subtitle.bezel_width" = "Width of the refracting edge around the clock glyphs, in points.";
+"prefs.section.lockscreen_date_label.title" = "Date Label";
+"prefs.section.lockscreen_date_label.subtitle" = "Customize the lockscreen date text.";
+"prefs.control.date_format_enabled" = "Custom Date Format";
+"prefs.subtitle.date_format_enabled" = "Replace the lockscreen date with a custom date format.";
+"prefs.control.date_format" = "Format";
+"prefs.subtitle.date_format" = "Uses Unicode date pattern syntax, for example EEE MMM d.";

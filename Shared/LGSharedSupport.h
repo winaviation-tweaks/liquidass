@@ -2,10 +2,6 @@
 
 #import <UIKit/UIKit.h>
 
-#ifndef LIQUIDASS_DEBUG
-#define LIQUIDASS_DEBUG 0
-#endif
-
 #if __has_include(<roothide.h>)
 #import <roothide.h>
 #else
@@ -24,6 +20,8 @@ NSString *LGMainBundleIdentifier(void);
 BOOL LGIsSpringBoardProcess(void);
 BOOL LGIsPreferencesProcess(void);
 BOOL LGIsAtLeastiOS16(void);
+BOOL LGBackboardSafeModeActive(void);
+void LGClearBackboardSafeMode(void);
 
 NSString *LGRWBDefaultWidgetBundleIDsText(void);
 
@@ -36,6 +34,7 @@ NSString *LGRWBDefaultWidgetBundleIDsText(void);
 
 FOUNDATION_EXPORT const CGFloat LGKeyboardDefaultCornerRadius;
 FOUNDATION_EXPORT const CGFloat LGKeyboardDefaultOverhang;
+FOUNDATION_EXPORT const CGFloat LGKeyboardDefaultKeyRadius;
 FOUNDATION_EXPORT const CGFloat LGBannerDefaultCornerRadius;
 FOUNDATION_EXPORT const CGFloat LGBannerDefaultBezelWidth;
 FOUNDATION_EXPORT const CGFloat LGBannerDefaultBlur;
@@ -66,6 +65,7 @@ BOOL LG_globalEnabled(void);
 void LGReloadPreferences(void);
 void LGObservePreferenceChanges(dispatch_block_t block);
 
+BOOL LGDebugLoggingEnabled(void);
 void LGLog(NSString *format, ...);
 
 CGColorSpaceRef LGSharedRGBColorSpace(void);

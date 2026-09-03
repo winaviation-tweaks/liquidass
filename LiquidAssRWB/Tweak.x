@@ -1,4 +1,5 @@
-// creds to owngoalstudios remove widget background
+// Portion based on widget background removal logic by OwnGoal Studio (MIT License, see NOTICES.md)
+// Combined work licensed under CC BY-NC 4.0
 
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
@@ -27,7 +28,7 @@ static NSArray<NSString *> *RWBParseThirdPartyBundleIDs(NSString *rawText) {
 
 static void ReloadPrefs(void) {
     LGReloadPreferences();
-    kIsEnabled = YES;
+    kIsEnabled = LG_globalEnabled() && LG_prefBool(@"Widgets.Enabled", YES);
     kIsEnabledForSystemWidgets = YES;
     kIsEnabledForMaterialView = NO;
     kForceDarkMode = YES;

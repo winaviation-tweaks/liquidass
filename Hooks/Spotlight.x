@@ -27,7 +27,7 @@ static void LGUpdateSpotlightTextField(UIView *view) {
     view.transform = CGAffineTransformTranslate(
         [objc_getAssociatedObject(view,
             kLGSpotlightOriginalTextTransformKey) CGAffineTransformValue],
-        0.0, -10.0);
+        0.0, -5.0);
 }
 
 static void LGUpdateSpotlightGlass(UIView *view) {

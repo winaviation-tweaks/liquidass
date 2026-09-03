@@ -5,22 +5,6 @@ This tweak is incomplete, issues WILL happen.
 
 Nightly builds that contains the bleeding edge changes are available [here](https://github.com/winaviation-tweaks/liquidass/releases/tag/nightly)
 
-## Applied to
-- folders on the homescreen
-- opened folders
-- widgets
-- underneath app icons
-- dock
-- lockscreen platter views (notifications & music player)
-- quick actions buttons
-- app library
-- settings app
-- clock
-- keyboard
-- tabbars
-- alerts
-- coversheet (lockscreen pull)
-
 ## Localization
 
 Usage: tools/localizations.rb COMMAND [PATH]

@@ -8,6 +8,7 @@
 #import <time.h>
 #import <math.h>
 #import <unistd.h>
+#import <stdatomic.h>
 
 static const void *kLGOutsetKey = &kLGOutsetKey;
 static const void *kLGRadiusKey = &kLGRadiusKey;
@@ -60,6 +61,11 @@ static void sblog(const char *fmt, ...) {
 
 static const NSInteger kLGDynamicRadiusSteps = 32;
 
+static BOOL LGNeedsGaussianIdentityFallback(void) {
+    return access("/var/mobile/Library/Accessibility/liquidass-gaussian-identity-state.bin",
+                  F_OK) == 0;
+}
+
 static CFStringRef const kLGParametersReloadedNotification =
     CFSTR("dylv.liquidglass/ParametersReloaded");
 static NSHashTable<LGLiveBackdropView *> *sLGAllGlasses;
@@ -79,6 +85,8 @@ static CMMotionManager *sLGMotionManager;
 static BOOL sLGMotionSetup;
 static BOOL sLGMotionRunning;
 static CGFloat sLGSpecularAngle = -M_PI_4;
+static CGFloat sLGTargetSpecularAngle = -M_PI_4;
+static CADisplayLink *sLGMotionDisplayLink;
 static BOOL sLGMotionEnabled;
 static CGFloat sLGMotionSensitivity = 2.0;
 static CGFloat sLGMotionLoggedSensitivity = -1.0;
@@ -87,6 +95,10 @@ static CFStringRef const kLGMotionPrefsReloadNotification = CFSTR("dylv.liquidas
 static void LGApplyMotionHighlightAngle(void);
 static void LGRefreshMotionHighlights(void);
 static void LGEnsureFilterRefreshObserver(void);
+
+@interface LGMotionDisplayLinkTarget : NSObject
+- (void)tick:(CADisplayLink *)displayLink;
+@end
 
 static BOOL LGIsSpringBoardBundle(void) {
     return [NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"];
@@ -97,7 +109,7 @@ static void LGReloadMotionHighlightPreferences(void) {
     id sensitivity = LGGlassPreferenceValue(@"Specular.Motion.Sensitivity");
     BOOL previousEnabled = sLGMotionEnabled;
     CGFloat previousSensitivity = sLGMotionSensitivity;
-    sLGMotionEnabled = [enabled respondsToSelector:@selector(boolValue)] ? [enabled boolValue] : YES;
+    sLGMotionEnabled = [enabled respondsToSelector:@selector(boolValue)] ? [enabled boolValue] : NO;
     CGFloat value = [sensitivity respondsToSelector:@selector(doubleValue)] ? [sensitivity doubleValue] : 2.0;
     sLGMotionSensitivity = MAX(0.0, MIN(8.0, value));
     if (sLGMotionLoggedSensitivity < 0.0 || previousEnabled != sLGMotionEnabled ||
@@ -135,47 +147,10 @@ static BOOL LGUsesPrefsControlCaptureScale(NSString *filterType) {
     }
 }
 
-static CGFloat LGNativeBlurRadiusForFilterType(NSString *filterType) {
-    const LGHostDefinition *host = LGHostDefinitionForFilterType(filterType.UTF8String);
-    if (!host) return 0.0;
-    NSString *prefix = [NSString stringWithUTF8String:host->preferencePrefix];
-    NSString *key = [prefix stringByAppendingString:@".Blur"];
-    id value = LGGlassPreferenceValue(key);
-    return [value respondsToSelector:@selector(doubleValue)]
-        ? MAX(0.0, [value doubleValue]) : host->blur;
-}
-
-static id LGCreateNativeGaussianFilter(Class filterCls, CGFloat radius) {
-    if (!filterCls || radius <= 0.0) return nil;
-    id blurFilter = nil;
-    SEL typeSelector = NSSelectorFromString(@"filterWithType:");
-    if ([filterCls respondsToSelector:typeSelector]) {
-        blurFilter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
-            filterCls, typeSelector, @"gaussianBlur");
-    }
-    if (!blurFilter) {
-        SEL nameSelector = NSSelectorFromString(@"filterWithName:");
-        if ([filterCls respondsToSelector:nameSelector]) {
-            blurFilter = ((id (*)(Class, SEL, NSString *))objc_msgSend)(
-                filterCls, nameSelector, @"gaussianBlur");
-        }
-    }
-    if (!blurFilter) return nil;
-    @try {
-        [blurFilter setValue:@(radius) forKey:@"inputRadius"];
-        [blurFilter setValue:@YES forKey:@"inputNormalizeEdges"];
-    } @catch (__unused NSException *e) {
-        return nil;
-    }
-    return blurFilter;
-}
-
 static const CGFloat kLGScaleMax    = 0.75;
 static const CGFloat kLGScaleMin    = 0.25;
 
 static const CGFloat kLGClockCaptureScale = 0.50;
-
-static const CGFloat kLGCoverSheetCaptureScale = 1.00;
 
 static const CGFloat kLGPrefsControlScale = 1.50;
 static const CGFloat kLGDefaultScaleBudget = 8000.0;
@@ -242,23 +217,44 @@ static void LGApplyMotionHighlightAngle(void) {
     }
 }
 
+@implementation LGMotionDisplayLinkTarget
+- (void)tick:(CADisplayLink *)displayLink {
+    CGFloat dt = displayLink.targetTimestamp > displayLink.timestamp
+        ? displayLink.targetTimestamp - displayLink.timestamp : 1.0 / 60.0;
+    CGFloat delta = atan2(sin(sLGTargetSpecularAngle - sLGSpecularAngle),
+                          cos(sLGTargetSpecularAngle - sLGSpecularAngle));
+    CGFloat response = 1.0 - exp(-14.0 * dt);
+    sLGSpecularAngle += delta * response;
+    if (fabs(delta) < 0.0005) sLGSpecularAngle = sLGTargetSpecularAngle;
+    LGApplyMotionHighlightAngle();
+}
+@end
+
 static void LGRefreshMotionHighlights(void) {
     if (!sLGMotionSetup || !LGIsSpringBoardBundle()) return;
     if (!sLGMotionEnabled) {
         [sLGMotionManager stopDeviceMotionUpdates];
+        [sLGMotionDisplayLink invalidate];
+        sLGMotionDisplayLink = nil;
         sLGMotionRunning = NO;
         sLGSpecularAngle = -M_PI_4;
+        sLGTargetSpecularAngle = sLGSpecularAngle;
         LGApplyMotionHighlightAngle();
         return;
     }
     if (sLGMotionRunning) return;
 
-    CMAttitudeReferenceFrame frames = [CMMotionManager availableAttitudeReferenceFrames];
-    CMAttitudeReferenceFrame frame = (frames & CMAttitudeReferenceFrameXMagneticNorthZVertical)
-        ? CMAttitudeReferenceFrameXMagneticNorthZVertical
-        : CMAttitudeReferenceFrameXArbitraryCorrectedZVertical;
+    CMAttitudeReferenceFrame frame = CMAttitudeReferenceFrameXArbitraryZVertical;
 
-    sLGMotionManager.deviceMotionUpdateInterval = 1.0 / 10.0;
+    sLGMotionManager.deviceMotionUpdateInterval = 1.0 / 60.0;
+    static LGMotionDisplayLinkTarget *displayLinkTarget;
+    if (!displayLinkTarget) displayLinkTarget = [LGMotionDisplayLinkTarget new];
+    if (!sLGMotionDisplayLink) {
+        sLGMotionDisplayLink = [CADisplayLink displayLinkWithTarget:displayLinkTarget
+                                                           selector:@selector(tick:)];
+        [sLGMotionDisplayLink addToRunLoop:NSRunLoop.mainRunLoop
+                                   forMode:NSRunLoopCommonModes];
+    }
     sLGMotionRunning = YES;
     [sLGMotionManager startDeviceMotionUpdatesUsingReferenceFrame:frame
                                                             toQueue:NSOperationQueue.mainQueue
@@ -266,20 +262,12 @@ static void LGRefreshMotionHighlights(void) {
         if (!motion || error || !sLGMotionEnabled) return;
         CMAttitude *attitude = motion.attitude;
 
-        CGFloat baseMotion = attitude.yaw + attitude.roll * 0.65 + attitude.pitch * 0.35;
+        CGFloat baseMotion = attitude.roll * 0.5 + attitude.pitch * 0.5;
         CGFloat target = baseMotion * (sLGMotionSensitivity / 1.5);
 
-        CGFloat delta = atan2(sin(target - sLGSpecularAngle), cos(target - sLGSpecularAngle));
-        CGFloat nextAngle = sLGSpecularAngle + delta * 0.40;
-        static CGFloat lastAppliedAngle = CGFLOAT_MAX;
-        if (lastAppliedAngle == CGFLOAT_MAX ||
-            fabs(atan2(sin(nextAngle - lastAppliedAngle), cos(nextAngle - lastAppliedAngle))) >= 0.025) {
-            sLGSpecularAngle = nextAngle;
-            lastAppliedAngle = nextAngle;
-            LGApplyMotionHighlightAngle();
-        }
+        sLGTargetSpecularAngle = target;
     }];
-    LGLog(@"motion highlights started reference=%s", frame == CMAttitudeReferenceFrameXMagneticNorthZVertical ? "magnetic-north" : "corrected-arbitrary");
+    LGLog(@"motion highlights started reference=tilt");
 }
 
 static void LGEnsureMotionHighlights(void) {
@@ -297,22 +285,27 @@ static void LGEnsureMotionHighlights(void) {
     LGRefreshMotionHighlights();
 }
 
-static const CGFloat kLGSpecularMinimumOpacity = 0.30;
-static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
+static const CGFloat kLGSpecularMinimumOpacity = 0.18;
+static const CGFloat kLGSpecularBrightBoostOpacity = 0.72;
+static const CGFloat kLGSpecularDarkOpacity = 0.16;
+static const CGFloat kLGGlassEdgeWidth = 1.0;
 
 @implementation LGLiveBackdropView {
     NSString        *_lgGroupName;
     CAGradientLayer *_specular;
     CAGradientLayer *_specularBoost;
-    CALayer         *_specularMask;
-    CALayer         *_specularBoostMask;
-    CALayer         *_nativeBlurLayer;
-    CGFloat          _nativeBlurRadius;
+    CAGradientLayer *_specularDark;
+    CAShapeLayer    *_edge;
+    CAShapeLayer    *_specularDarkMask;
+    CAShapeLayer    *_specularMask;
+    CAShapeLayer    *_specularBoostMask;
     BOOL             _backdropConfigured;
     BOOL             _filterAttached;
     uint32_t         _lgId;
     CGFloat          _appliedScale;
+    CGFloat          _appliedBackdropZoom;
     BOOL             _parameterRefreshVariant;
+    NSInteger        _lastRadiusStep;
 }
 
 - (NSString *)lgEffectiveFilterType {
@@ -323,7 +316,11 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
     if (LGUsesDynamicRadiusType(base) && !CGRectIsEmpty(self.bounds)) {
         CGFloat shortest = MIN(CGRectGetWidth(self.bounds), CGRectGetHeight(self.bounds));
         CGFloat ratio = shortest > 0.0 ? self.layer.cornerRadius / shortest : 0.0;
-        NSInteger step = (NSInteger)llround(MAX(0.0, MIN(0.5, ratio)) * kLGDynamicRadiusSteps);
+        CGFloat exact = MAX(0.0, MIN(0.5, ratio)) * kLGDynamicRadiusSteps;
+        NSInteger step = (NSInteger)llround(exact);
+        if (_lastRadiusStep >= 0 && fabs(exact - (CGFloat)_lastRadiusStep) < 0.75)
+            step = _lastRadiusStep;
+        _lastRadiusStep = step;
         base = [base stringByAppendingFormat:@".r%ld", (long)step];
     }
     NSString *type = self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark
@@ -347,15 +344,19 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
 - (instancetype)initWithFrame:(CGRect)frame groupName:(NSString *)groupName filterType:(NSString *)filterType {
     self = [super initWithFrame:frame];
     if (!self) return nil;
+    _lastRadiusStep = -1;
+    _lgShapeRect = CGRectNull;
     _lgFilterType = [filterType copy];
-    static uint32_t idCounter = 0;
-    _lgId = ++idCounter;
+    static atomic_uint idCounter = 0;
+    _lgId = atomic_fetch_add(&idCounter, 1) + 1;
     if (groupName.length) {
-
         _lgGroupName = [groupName copy];
     } else {
-
-        _lgGroupName = [NSString stringWithFormat:@"dylv.liquidglass.g%u", _lgId];
+        static uint32_t salt = 0;
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{ salt = arc4random(); });
+        _lgGroupName = [NSString stringWithFormat:@"dylv.liquidglass.p%d.%08x.g%u",
+                                                  getpid(), salt, _lgId];
     }
     self.userInteractionEnabled = NO;
     self.backgroundColor        = [UIColor clearColor];
@@ -384,7 +385,8 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
     if (previousTraitCollection.userInterfaceStyle != self.traitCollection.userInterfaceStyle) {
         _filterAttached = NO;
         [self applyFilters];
-    }
+        [self updateSpecular];
+        }
 }
 
 - (NSNumber *)lgSpecularEnabledOverride {
@@ -401,102 +403,114 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
 
 - (void)layoutSubviews  { [super layoutSubviews];  [self applyFilters]; [self updateSpecular]; }
 
-- (void)updateNativeBlurOverlayWithRadius:(CGFloat)radius filterClass:(Class)filterCls {
-    if (radius <= 0.0 || !filterCls) {
-        [_nativeBlurLayer removeFromSuperlayer];
-        _nativeBlurLayer = nil;
-        _nativeBlurRadius = 0.0;
-        return;
-    }
+- (void)setLgShapeRect:(CGRect)rect {
+    if (CGRectEqualToRect(_lgShapeRect, rect)) return;
+    _lgShapeRect = rect;
+    [self updateSpecular];
+}
 
-    BOOL needsFilter = !_nativeBlurLayer || fabs(_nativeBlurRadius - radius) > 0.001;
-    id gaussian = needsFilter ? LGCreateNativeGaussianFilter(filterCls, radius) : nil;
-    if (needsFilter && !gaussian) return;
-    if (!_nativeBlurLayer) {
-        Class backdropCls = NSClassFromString(@"CABackdropLayer");
-        if (!backdropCls) return;
-        _nativeBlurLayer = [backdropCls layer];
-        @try {
-            [_nativeBlurLayer setValue:@NO forKey:@"layerUsesCoreImageFilters"];
-            [_nativeBlurLayer setValue:@YES forKey:@"windowServerAware"];
-            [_nativeBlurLayer setValue:[_lgGroupName stringByAppendingString:@".nativeblur"]
-                                forKey:@"groupName"];
-            [_nativeBlurLayer setValue:@"dylv.liquidglass.nativeblur" forKey:@"groupNamespace"];
-            [_nativeBlurLayer setValue:@YES forKey:@"ignoresScreenClip"];
-
-            [_nativeBlurLayer setValue:@1.0 forKey:@"scale"];
-        } @catch (NSException *e) {
-            LGLog(@"glass#%u native blur overlay configure failed: %@", _lgId, e.reason);
-        }
-        [self.layer insertSublayer:_nativeBlurLayer atIndex:0];
-        if (LGHostIdentifierForFilterType(_lgFilterType.UTF8String) == LGHostIdentifierClock) {
-            LGLog(@"clock native blur layer created radius=%.2f group=%@",
-                  radius, _lgGroupName);
-        }
-    }
-
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    _nativeBlurLayer.frame = self.bounds;
-    _nativeBlurLayer.cornerRadius = self.layer.cornerRadius;
-    _nativeBlurLayer.masksToBounds = YES;
-    @try { [_nativeBlurLayer setValue:[self.layer valueForKey:@"cornerCurve"] forKey:@"cornerCurve"]; }
-    @catch (__unused NSException *e) {}
-    if (gaussian) {
-        _nativeBlurLayer.filters = @[gaussian];
-        _nativeBlurRadius = radius;
-        if (LGHostIdentifierForFilterType(_lgFilterType.UTF8String) == LGHostIdentifierClock) {
-            LGLog(@"clock native blur filter applied radius=%.2f bounds=%@",
-                  radius, NSStringFromCGRect(self.bounds));
-        }
-    }
-    [CATransaction commit];
+- (void)setLgShapeCornerRadius:(CGFloat)radius {
+    if (fabs(_lgShapeCornerRadius - radius) < 0.01) return;
+    _lgShapeCornerRadius = radius;
+    [self updateSpecular];
 }
 
 - (void)updateSpecular {
     if (CGRectIsEmpty(self.bounds)) return;
 
+    BOOL hasShape = !CGRectIsNull(_lgShapeRect) && !CGRectIsEmpty(_lgShapeRect);
+    CGRect shapeRect = hasShape ? _lgShapeRect : self.bounds;
+    CGFloat shapeRadius = hasShape ? _lgShapeCornerRadius
+                                   : self.layer.cornerRadius;
+
     NSNumber *override = self.lgSpecularEnabledOverride;
     BOOL enabled = override ? override.boolValue
                             : LGSpecularEnabledForFilterType(_lgFilterType);
+    const LGHostDefinition *host = LGHostDefinitionForFilterType(_lgFilterType.UTF8String);
+    if (host == &kLGHostRegistry[LGHostIdentifierClock]) return;
     if (!enabled && !_specular) return;
+
+    if (!_edge) {
+        _edge = [CAShapeLayer layer];
+        _edge.backgroundColor = UIColor.clearColor.CGColor;
+        _edge.borderWidth = kLGGlassEdgeWidth;
+        [self.layer addSublayer:_edge];
+    }
 
     if (!_specular) {
         id clear = (id)UIColor.clearColor.CGColor;
         _specular = [CAGradientLayer layer];
-        _specular.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity].CGColor,
-                             clear,
-                             (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity].CGColor];
-        _specular.locations = @[@0.0, @0.5, @1.0];
-        _specularMask = [CALayer layer];
+        _specular.colors = @[
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity].CGColor,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity * 0.35].CGColor,
+            clear, clear,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity * 0.15].CGColor,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularMinimumOpacity * 0.42].CGColor
+        ];
+        _specular.locations = @[@0.0, @0.12, @0.34, @0.66, @0.88, @1.0];
+        _specular.compositingFilter = @"screenBlendMode";
+        _specularMask = [CAShapeLayer layer];
         _specularMask.backgroundColor = UIColor.clearColor.CGColor;
         _specularMask.borderColor = UIColor.blackColor.CGColor;
         _specular.mask = _specularMask;
         [self.layer addSublayer:_specular];
 
         _specularBoost = [CAGradientLayer layer];
-        _specularBoost.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity].CGColor,
-                                  clear,
-                                  (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity].CGColor];
-        _specularBoost.locations = @[@0.0, @0.5, @1.0];
+        _specularBoost.colors = @[
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity].CGColor,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity * 0.28].CGColor,
+            clear, clear,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity * 0.10].CGColor,
+            (id)[UIColor colorWithWhite:1.0 alpha:kLGSpecularBrightBoostOpacity * 0.42].CGColor
+        ];
+        _specularBoost.locations = _specular.locations;
         _specularBoost.compositingFilter = @"overlayBlendMode";
-        _specularBoostMask = [CALayer layer];
+        _specularBoostMask = [CAShapeLayer layer];
         _specularBoostMask.backgroundColor = UIColor.clearColor.CGColor;
         _specularBoostMask.borderColor = UIColor.blackColor.CGColor;
         _specularBoost.mask = _specularBoostMask;
         [self.layer addSublayer:_specularBoost];
+
+        _specularDark = [CAGradientLayer layer];
+        _specularDark.colors = @[
+            (id)[UIColor colorWithWhite:0.0 alpha:kLGSpecularDarkOpacity].CGColor,
+            (id)[UIColor colorWithWhite:0.0 alpha:kLGSpecularDarkOpacity * 0.35].CGColor,
+            clear, clear,
+            (id)[UIColor colorWithWhite:0.0 alpha:kLGSpecularDarkOpacity * 0.15].CGColor,
+            (id)[UIColor colorWithWhite:0.0 alpha:kLGSpecularDarkOpacity * 0.42].CGColor
+        ];
+        _specularDark.locations = _specular.locations;
+        _specularDark.compositingFilter = @"multiplyBlendMode";
+        _specularDarkMask = [CAShapeLayer layer];
+        _specularDarkMask.backgroundColor = UIColor.clearColor.CGColor;
+        _specularDarkMask.borderColor = UIColor.blackColor.CGColor;
+        _specularDark.mask = _specularDarkMask;
+        [self.layer addSublayer:_specularDark];
     }
 
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
     _specular.hidden = !enabled;
     _specularBoost.hidden = !enabled;
-    for (CALayer *gradient in @[_specular, _specularBoost]) gradient.frame = self.bounds;
-    for (CALayer *mask in @[_specularMask, _specularBoostMask]) {
-        mask.frame = self.bounds;
-        mask.cornerRadius = self.layer.cornerRadius;
+    _specularDark.hidden = !enabled;
+    for (CALayer *gradient in @[_specular, _specularBoost, _specularDark])
+        gradient.frame = shapeRect;
+    UIColor *edgeColor = [UIColor.separatorColor colorWithAlphaComponent:0.16];
+    if (@available(iOS 13.0, *))
+        edgeColor = [edgeColor resolvedColorWithTraitCollection:self.traitCollection];
+    _edge.hidden = NO;
+    _edge.frame = shapeRect;
+    _edge.cornerRadius = shapeRadius;
+    _edge.cornerCurve = self.layer.cornerCurve;
+    _edge.borderWidth = kLGGlassEdgeWidth;
+    _edge.borderColor = edgeColor.CGColor;
+
+    for (CAShapeLayer *mask in @[_specularMask, _specularBoostMask, _specularDarkMask]) {
+        mask.frame = CGRectMake(0.0, 0.0, CGRectGetWidth(shapeRect),
+                                CGRectGetHeight(shapeRect));
+        mask.cornerRadius = shapeRadius;
         mask.cornerCurve = self.layer.cornerCurve;
-        mask.borderWidth = 0.75;
+        mask.borderWidth = 1.0;
     }
     [CATransaction commit];
     [self applySpecularAngle:sLGSpecularAngle];
@@ -512,6 +526,8 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
     _specular.endPoint = CGPointMake(0.5 - dx, 0.5 - dy);
     _specularBoost.startPoint = _specular.startPoint;
     _specularBoost.endPoint = _specular.endPoint;
+    _specularDark.startPoint = _specular.startPoint;
+    _specularDark.endPoint = _specular.endPoint;
     [CATransaction commit];
 }
 
@@ -525,7 +541,7 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
         if (!_backdropConfigured) {
             // these private flags keep capture in render server space
             [layer setValue:@NO  forKey:@"layerUsesCoreImageFilters"];
-            [layer setValue:@YES forKey:@"windowServerAware"];
+            [layer setValue:@NO forKey:@"windowServerAware"];
             [layer setValue:_lgGroupName forKey:@"groupName"];
             [layer setValue:@"dylv.liquidglass" forKey:@"groupNamespace"];
 
@@ -534,33 +550,36 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
         }
 
         CGFloat wantScale;
-        switch (LGHostIdentifierForFilterType(_lgFilterType.UTF8String)) {
-            case LGHostIdentifierClock:
-                wantScale = kLGClockCaptureScale;
-                break;
-            case LGHostIdentifierCoverSheet:
-                wantScale = kLGCoverSheetCaptureScale;
-                break;
-            default:
-                wantScale = LGUsesPrefsControlCaptureScale(_lgFilterType)
-                    ? kLGPrefsControlScale : LGScaleForSize(self.bounds.size);
-                break;
+        enum LGHostIdentifier hostIdentifier =
+            LGHostIdentifierForFilterType(_lgFilterType.UTF8String);
+        if (hostIdentifier == LGHostIdentifierClock) {
+            wantScale = kLGClockCaptureScale;
+        } else if (hostIdentifier == LGHostIdentifierCoverSheet ||
+                   hostIdentifier == LGHostIdentifierTabBar) {
+            wantScale = 1.0;
+        } else {
+            wantScale = LGUsesPrefsControlCaptureScale(_lgFilterType)
+                ? kLGPrefsControlScale : LGScaleForSize(self.bounds.size);
         }
+        CGFloat wantZoom = _lgBackdropZoom > 0.0 ? _lgBackdropZoom : 1.0;
+        BOOL zoomRelevant = fabs(wantZoom - 1.0) > 0.001 || _appliedBackdropZoom > 0.0;
+        if (zoomRelevant && fabs(wantZoom - _appliedBackdropZoom) > 0.001) {
+            _appliedBackdropZoom = wantZoom;
+            @try { [layer setValue:@(wantZoom) forKey:@"zoom"]; }
+            @catch (__unused NSException *exception) {}
+            LGLog(@"glass#%u zoom type=%@ want=%.3f readback=%@", _lgId,
+                  _lgFilterType ?: @"default", wantZoom,
+                  [layer valueForKey:@"zoom"] ?: @"<none>");
+        }
+
         if (fabs(wantScale - _appliedScale) > 0.02) {
             [layer setValue:@(wantScale) forKey:@"scale"];
             _appliedScale = wantScale;
-            LGLog(@"glass#%u scale type=%@ bounds=%.1fx%.1f quality=%.2f budget=%.0f scale=%.3f",
-                       _lgId,
-                       _lgFilterType ?: @"default",
-                       CGRectGetWidth(self.bounds), CGRectGetHeight(self.bounds),
-                       LGQualityValue(), LGScaleBudget(), wantScale);
         }
 
         NSString *wantType = [self lgEffectiveFilterType];
         NSArray *existing = layer.filters;
-        CGFloat nativeBlur = LGNativeBlurRadiusForFilterType(_lgFilterType ?: wantType);
         Class filterCls = NSClassFromString(@"CAFilter");
-        [self updateNativeBlurOverlayWithRadius:nativeBlur filterClass:filterCls];
 
         if (_filterAttached && existing.count == 1) {
             NSString *type = nil;
@@ -579,8 +598,15 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
             return;
         }
 
+        if (LGNeedsGaussianIdentityFallback()) {
+            @try { [glassFilter setValue:@1.0 forKey:@"inputRadius"]; }
+            @catch (...) {}
+        }
+
         layer.filters = @[glassFilter];
         _filterAttached = YES;
+        [[NSNotificationCenter defaultCenter]
+            postNotificationName:@"LGLiveBackdropViewFilterDidAttach" object:self];
     } @catch (NSException *e) {
         sblog("applyFilters exception: %s", e.reason.UTF8String);
     }
@@ -593,7 +619,21 @@ static const CGFloat kLGSpecularBrightBoostOpacity = 0.70;
     _appliedScale = -1.0;
     _filterAttached = NO;
     [self applyFilters];
+    [self updateSpecular];
     [self.layer setNeedsDisplay];
+    [_specular setNeedsDisplay];
+    [_specularBoost setNeedsDisplay];
+}
+
+- (void)lgInvalidateFilterContents {
+    _parameterRefreshVariant = !_parameterRefreshVariant;
+    _filterAttached = NO;
+    [self applyFilters];
+    [self.layer setNeedsDisplay];
+}
+
+- (BOOL)lgFilterAttached {
+    return _filterAttached;
 }
 
 @end

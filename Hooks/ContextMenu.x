@@ -129,9 +129,15 @@ static void styleContextMenuReusableGapView(UIView *view) {
     }
 }
 
+static BOOL isContextMenuCutoutShadow(UIView *view) {
+    return isExactClass(view, @"_UICutoutShadowView") &&
+           isExactClass(view.superview, @"_UIContextMenuListView");
+}
+
 static void hideContextMenuSeparators(UIView *root) {
     for (UIView *sub in root.subviews) {
-        if (shouldHideContextMenuSeparatorView(sub)) {
+        if (shouldHideContextMenuSeparatorView(sub) ||
+            isContextMenuCutoutShadow(sub)) {
             ctxRememberVisualState(sub);
             sub.hidden = YES;
             sub.alpha  = 0.0;
@@ -155,6 +161,7 @@ static void setBackdropHiddenInEffectView(UIView *effectView) {
 
 static void injectGlassIntoContextEffectView(UIVisualEffectView *fx, int attempt) {
     if (!lgHostEnabled(@"ContextMenu")) return;
+    if (isExactClass(fx.superview, @"_UIContextMenuHeaderView")) return;
     UIView *container = fx.contentView;
     // springboard sometimes gives us zero-ish bounds for a bit
     if (CGRectGetWidth(container.bounds) < 10.0 || CGRectGetHeight(container.bounds) < 10.0) {

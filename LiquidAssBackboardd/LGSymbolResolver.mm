@@ -1,4 +1,3 @@
-
 #import "LGSymbolResolver.h"
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
@@ -49,17 +48,16 @@ void *LGSymStripData(void *dataAddr) {
 
 #define LG_LOG_PATH "/var/mobile/Library/Accessibility/liquidglass.log"
 static void rlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+extern bool gLGBackboardDebugLogging;
+
 static void rlog(const char *fmt, ...) {
-#if LIQUIDASS_DEBUG
+    if (!gLGBackboardDebugLogging) return;
     FILE *f = fopen(LG_LOG_PATH, "a");
     if (!f) return;
     fputs("[LGSYM] ", f);
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
     fputc('\n', f);
     fclose(f);
-#else
-    (void)fmt;
-#endif
 }
 
 static uint8_t  *g_qcTextBase  = nullptr;

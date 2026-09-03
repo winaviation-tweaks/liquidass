@@ -2,6 +2,43 @@
 #import <objc/runtime.h>
 #import <os/lock.h>
 #import <stdlib.h>
+#import <sys/sysctl.h>
+#import <unistd.h>
+
+static const char *kLGBackboardSafeModeStatePath =
+    "/var/mobile/Library/Accessibility/liquidass-backboardd-guard.bin";
+static const char *kLGBackboardSafeModePendingPath =
+    "/var/mobile/Library/Accessibility/liquidass-backboardd-alert";
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    int64_t bootTime;
+    uint64_t lastStartMilliseconds;
+    uint32_t rapidStarts;
+    uint32_t disabled;
+} LGBackboardSafeModeState;
+
+BOOL LGBackboardSafeModeActive(void) {
+    NSData *data = [NSData dataWithContentsOfFile:
+        [NSString stringWithUTF8String:kLGBackboardSafeModeStatePath]];
+    if (data.length != sizeof(LGBackboardSafeModeState)) return NO;
+
+    LGBackboardSafeModeState state = {};
+    [data getBytes:&state length:sizeof(state)];
+    if (state.magic != 0x4c47534d || state.version != 1 || !state.disabled) return NO;
+
+    struct timeval bootTime = {};
+    size_t size = sizeof(bootTime);
+    int mib[2] = { CTL_KERN, KERN_BOOTTIME };
+    if (sysctl(mib, 2, &bootTime, &size, NULL, 0) != 0) return NO;
+    return state.bootTime == (int64_t)bootTime.tv_sec;
+}
+
+void LGClearBackboardSafeMode(void) {
+    unlink(kLGBackboardSafeModeStatePath);
+    unlink(kLGBackboardSafeModePendingPath);
+}
 
 __attribute__((weak)) int __isOSVersionAtLeast(int major, int minor, int patch) {
     NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
@@ -17,6 +54,7 @@ const char * const LGPrefsChangedNotificationCString = "dylv.liquidassprefs/Relo
 const char * const LGPrefsRespringNotificationCString = "dylv.liquidassprefs/Respring";
 const CGFloat LGKeyboardDefaultCornerRadius = 28.0;
 const CGFloat LGKeyboardDefaultOverhang = 20.0;
+const CGFloat LGKeyboardDefaultKeyRadius = 10.0;
 const CGFloat LGBannerDefaultCornerRadius = 18.5;
 const CGFloat LGBannerDefaultBezelWidth = 18.0;
 const CGFloat LGBannerDefaultBlur = 40.0;
@@ -40,18 +78,12 @@ static NSString * const LGPrefsDidReloadInProcessNotification = @"dylv.liquidass
 static NSDictionary<NSString *, id> *sLGCachedPreferences = nil;
 static os_unfair_lock sLGPrefsLock = OS_UNFAIR_LOCK_INIT;
 static dispatch_once_t sLGPrefsSetupOnce;
-#if LIQUIDASS_DEBUG
 static dispatch_queue_t sLGLogQueue;
 static NSFileHandle *sLGLogHandle;
-#endif
 static void *kLGImageStableCacheKeyAssociation = &kLGImageStableCacheKeyAssociation;
-#if LIQUIDASS_DEBUG
-static const unsigned long long kLGLogMaxFileSize = 10ULL * 1024ULL * 1024ULL;
-#endif
 
 static NSDictionary<NSString *, id> *LGCopyPreferencesDictionary(void);
 
-#if LIQUIDASS_DEBUG
 static void LGCloseLogHandle(void) {
     if (!sLGLogHandle) return;
     if (@available(iOS 13.0, *)) {
@@ -93,28 +125,7 @@ static NSString *LGLogFilePath(void) {
     return sPath;
 }
 
-static void LGTrimLogFileIfNeeded(NSString *path, NSUInteger incomingLength) {
-    if (!path.length || incomingLength == 0) return;
-
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSDictionary<NSFileAttributeKey, id> *attributes = [fm attributesOfItemAtPath:path error:nil];
-    unsigned long long currentSize = attributes.fileSize;
-    if (currentSize + incomingLength <= kLGLogMaxFileSize) return;
-
-    LGCloseLogHandle();
-
-    NSData *existingData = [NSData dataWithContentsOfFile:path];
-    NSUInteger keepLength = (NSUInteger)MIN((unsigned long long)existingData.length, kLGLogMaxFileSize / 2ULL);
-    NSData *tailData = keepLength > 0 ? [existingData subdataWithRange:NSMakeRange(existingData.length - keepLength, keepLength)] : NSData.data;
-    NSMutableData *trimmedData = [NSMutableData data];
-    NSString *marker = [NSString stringWithFormat:@"[LiquidAss] log truncated at %@\n", [NSDate date]];
-    NSData *markerData = [marker dataUsingEncoding:NSUTF8StringEncoding];
-    if (markerData.length) [trimmedData appendData:markerData];
-    if (tailData.length) [trimmedData appendData:tailData];
-    [trimmedData writeToFile:path atomically:YES];
-}
-
-static void LGAppendLogLine(NSString *line, BOOL capped) {
+static void LGAppendLogLine(NSString *line) {
     NSString *path = LGLogFilePath();
     if (!path.length || !line.length) return;
 
@@ -139,10 +150,6 @@ static void LGAppendLogLine(NSString *line, BOOL capped) {
         if (!data.length) {
             return;
         }
-        if (capped) {
-            LGTrimLogFileIfNeeded(path, data.length);
-        }
-
         if (!sLGLogHandle) {
             sLGLogHandle = [NSFileHandle fileHandleForWritingAtPath:path];
         }
@@ -174,7 +181,6 @@ static void LGAppendLogLine(NSString *line, BOOL capped) {
         }
     });
 }
-#endif
 
 static NSDictionary<NSString *, id> *LGCopyPreferencesDictionary(void) {
     CFPreferencesAppSynchronize((__bridge CFStringRef)LGPrefsDomain);
@@ -337,17 +343,18 @@ BOOL LG_globalEnabled(void) {
     return LG_prefBool(@"Global.Enabled", NO);
 }
 
+BOOL LGDebugLoggingEnabled(void) {
+    return LG_prefBool(@"Debug.Logging.Enabled", NO);
+}
+
 void LGLog(NSString *format, ...) {
-#if LIQUIDASS_DEBUG
+    if (!LGDebugLoggingEnabled()) return;
     va_list args;
     va_start(args, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     NSLog(@"[LiquidAss] %@", message);
-    LGAppendLogLine([NSString stringWithFormat:@"[LiquidAss] %@\n", message], YES);
-#else
-    (void)format;
-#endif
+    LGAppendLogLine([NSString stringWithFormat:@"[LiquidAss] %@\n", message]);
 }
 
 CGColorSpaceRef LGSharedRGBColorSpace(void) {

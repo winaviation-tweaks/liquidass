@@ -25,6 +25,25 @@ BOOL isExactClass(UIView *v, NSString *name) {
 
 #pragma mark - per-host enable prefs
 
+BOOL LGProcessMatchesExclusionList(NSString *list) {
+    if (!list.length) return NO;
+    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier.lowercaseString ?: @"";
+    NSString *executable =
+        NSBundle.mainBundle.executablePath.lastPathComponent.lowercaseString ?: @"";
+    NSString *processName = NSProcessInfo.processInfo.processName.lowercaseString ?: @"";
+    NSCharacterSet *separators =
+        [NSCharacterSet characterSetWithCharactersInString:@"\n,;"];
+    for (NSString *rawEntry in [list componentsSeparatedByCharactersInSet:separators]) {
+        NSString *entry = [rawEntry stringByTrimmingCharactersInSet:
+            NSCharacterSet.whitespaceAndNewlineCharacterSet].lowercaseString;
+        if (!entry.length || [entry hasPrefix:@"#"]) continue;
+        if ([entry isEqualToString:bundleID] ||
+            [entry isEqualToString:executable] ||
+            [entry isEqualToString:processName]) return YES;
+    }
+    return NO;
+}
+
 BOOL lgHostEnabled(NSString *prefix) {
     if (!prefix.length) return YES;
     id global = LGGlassPreferenceValue(@"Global.Enabled");

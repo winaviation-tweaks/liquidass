@@ -14,6 +14,8 @@ BOOL isExactClass(UIView *v, NSString *name);
 
 BOOL lgHostEnabled(NSString *prefix);
 
+BOOL LGProcessMatchesExclusionList(NSString *list);
+
 void lgObservePreferenceReload(void (^handler)(void));
 
 #pragma mark - injection registry (live disable -> restore)
