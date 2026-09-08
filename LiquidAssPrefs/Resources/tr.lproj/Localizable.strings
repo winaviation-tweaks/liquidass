@@ -21,6 +21,8 @@
 "prefs.control.variable_font_softness" = "Yazı Yumuşaklığı";
 "prefs.control.motion_highlights" = "Hareket Vurguları";
 "prefs.control.motion_highlights_sensitivity" = "Hareket Hassasiyeti";
+"prefs.control.fresnel_glare" = "Fresnel Parlaması";
+"prefs.control.keyboard_overhang" = "Üst Çıkıntı";
 
 "prefs.subtitle.enabled" = "Bu cam görünümünü açar veya kapatır.";
 "prefs.subtitle.bezel_ratio" = "Cam görünümünün kısa kenarına oranla kırılan kenarın genişliği.";
@@ -44,6 +46,9 @@
 "prefs.subtitle.variable_font_height" = "iOS 26 saat fontu için yükseklik değeri.";
 "prefs.subtitle.variable_font_softness" = "iOS 26 saat fontu için yumuşaklık değeri.";
 "prefs.subtitle.global_enabled" = "Tüm yüzeyler için ana anahtar.";
+"prefs.subtitle.fresnel_glare" = "Cam gölgelendiricisi tarafından eklenen kenar parlamasını kontrol eder.";
+"prefs.subtitle.keyboard_overhang" = "Tahmin çubuğu gizlendiğinde klavyenin üzerinde ayrılan ek yükseklik.";
+
 "prefs.root.runtime_cache_footer" = "%@ RAM'e önbelleklendi";
 
 "prefs.section.dock.title" = "Dock";
@@ -63,12 +68,16 @@
 "prefs.section.misc.title" = "Çeşitli";
 "prefs.section.motion_highlights.title" = "Hareket Vurguları";
 "prefs.section.motion_highlights.subtitle" = "Cam yansıma parlamalarını yönlendirmek için cihaz hareketlerini kullanır.";
+"prefs.section.lockscreen_notifications.title" = "Bildirimler";
+"prefs.section.banner.title" = "Banner'lar";
+"prefs.section.lockscreen_quick_actions.title" = "Hızlı Eylemler";
+"prefs.section.lockscreen_passcode.title" = "Parola Ekranı";
+"prefs.section.lockscreen_clock.title" = "Saat";
+"prefs.section.keyboard_geometry.title" = "Klavye Geometrisi";
+"prefs.section.keyboard_geometry.subtitle" = "Klavye camı için şekil ve aralıklar.";
 
 "prefs.button.reset" = "Sıfırla";
 "prefs.button.cancel" = "Vazgeç";
-"prefs.app_icons_warning.title" = "Uygulama Simgeleri Etkinleştirilsin mi?";
-"prefs.app_icons_warning.body" = "Uygulama simgelerini etkinleştirmenin ÇOK FAZLA kasmaya neden olacağını unutmayın. Bu yüzey etkinken kasma sorunlarından şikayet etmeyin, teşekkürler.";
-"prefs.app_icons_warning.confirm" = "Etkinleştir";
 "prefs.button.more" = "Daha Fazla";
 "prefs.button.respring" = "Respring";
 "prefs.button.later" = "Sonra";
@@ -77,16 +86,22 @@
 "prefs.button.go_to_top" = "En Üste Git";
 "prefs.button.apply" = "Uygula";
 
+"prefs.app_icons_warning.title" = "Uygulama Simgeleri Etkinleştirilsin mi?";
+"prefs.app_icons_warning.body" = "Uygulama simgelerini etkinleştirmenin ÇOK FAZLA kasmaya neden olacağını unutmayın. Bu yüzey etkinken kasma sorunlarından şikayet etmeyin, teşekkürler.";
+"prefs.app_icons_warning.confirm" = "Etkinleştir";
+
 "prefs.reset_confirm.title" = "Sıfırlama Onaylansın mı?";
 "prefs.reset_confirm.body" = "Bu işlem tüm ayarları varsayılan değerlerine sıfırlayacaktır. Devam etmek istiyor musunuz?";
 "prefs.reset_confirm.surface_body_format" = "Bu işlem %@ için tüm ayarları varsayılana sıfırlayacaktır. Devam etmek istiyor musunuz?";
 "prefs.respring_confirm.title" = "Respring'i Onayla";
 "prefs.respring_confirm.body" = "Şimdi respring yapmak istiyor musunuz? Bunu yaparsanız çalışan arka plan uygulamaları veya işlemler kapanabilir.";
+
 "prefs.import_prefs.error_invalid" = "Panodaki veri geçerli bir LiquidAss ayar bloğu içermiyor.";
 "prefs.import_prefs.error_empty" = "İçe aktarılan ayar bloğu boş.";
 "prefs.import_prefs.error_read" = "Seçilen ayarlar dosyası okunamadı.";
 "prefs.import_prefs.success" = "Ayarlar içe aktarıldı. Bazı değişiklikler için respring gerekebilir.";
 "prefs.export_prefs.error" = "Paylaşılabilir ayar dışa aktarım dosyası oluşturulamadı.";
+
 "prefs.reopen_settings.title" = "Ayarları Yeniden Aç";
 "prefs.reopen_settings.body" = "Bu değişiklik Ayarlar uygulaması bir sonraki açılışında uygulanacaktır. Ayarlar şimdi yeniden açılsın mı?";
 "prefs.respring_bar.title" = "Respring Önerilir";
@@ -98,19 +113,16 @@
 
 "prefs.hero.eyebrow" = "Daha berbatı olamazdı...";
 "prefs.hero.subtitle" = "Şimdiye kadar yapılmış en absürt tweak.";
+
 "prefs.surface.homescreen.title" = "Ana Ekran";
 "prefs.surface.homescreen.subtitle" = "Ana ekranla ilgili yüzeyler için cam denetimleri.";
 "prefs.surface.lockscreen.title" = "Kilit Ekranı";
 "prefs.surface.lockscreen.subtitle" = "Kilit ekranıyla ilgili yüzeyler için cam denetimleri.";
-"prefs.section.lockscreen_notifications.title" = "Bildirimler";
-"prefs.section.banner.title" = "Banner'lar";
-"prefs.section.lockscreen_quick_actions.title" = "Hızlı Eylemler";
-"prefs.section.lockscreen_passcode.title" = "Parola Ekranı";
-"prefs.section.lockscreen_clock.title" = "Saat";
 "prefs.surface.app_library.title" = "Uygulama Arşivi";
 "prefs.surface.app_library.subtitle" = "Uygulama Arşivi ile ilgili yüzeyler için cam denetimleri.";
 "prefs.surface.surfaces.title" = "Yüzeyler";
 "prefs.surface.surfaces.subtitle" = "Tüm Liquid Glass yüzeylerine göz atın ve ince ayar yapın.";
+
 "prefs.surface.group.home.title" = "Ana Ekran";
 "prefs.surface.group.home.subtitle" = "Ana Ekran çevresinde gösterilen yüzeyler.";
 "prefs.surface.group.lock.title" = "Kilit Ekranı";
@@ -119,10 +131,13 @@
 "prefs.surface.group.library.subtitle" = "Uygulama Arşivi'nde gezinirken kullanılan yüzeyler.";
 "prefs.surface.group.system.title" = "Sistem Arayüzü";
 "prefs.surface.group.system.subtitle" = "Uygulamalar arasında ortak kullanılan sistem denetimleri.";
+
 "prefs.surface.coversheet.title" = "Kilit Ekranı Çekmecesi";
 "prefs.surface.keyboard.title" = "Klavye";
 "prefs.surface.tab_bar.title" = "Sekme Çubuğu";
 "prefs.surface.tab_bar_selection.title" = "Seçim Merceği";
+"prefs.surface.global_controls.title" = "Denetimler";
+
 "prefs.misc.respring.title" = "Respring";
 "prefs.misc.respring.subtitle" = "SpringBoard'u Yeniden Başlat";
 "prefs.misc.about.title" = "Daha Fazla Seçenek";
@@ -131,26 +146,28 @@
 "prefs.misc.prefs_settings.subtitle" = "Dil, sürüm detayları, bağış vb.";
 "prefs.misc.options_section.title" = "Ekstra Şeyler";
 "prefs.misc.options_section.subtitle" = "Deneysel özellikler ve diğer şeyler.";
-"prefs.control.fresnel_glare" = "Fresnel Parlaması";
-"prefs.subtitle.fresnel_glare" = "Cam gölgelendiricisi tarafından eklenen kenar parlamasını kontrol eder.";
+"prefs.misc.language.title" = "Dil";
+
 "prefs.misc.rwb_third_party.title" = "RWB Listesi";
 "prefs.misc.rwb_third_party.subtitle" = "RWB izin listesi için widget bundle id'lerini girin.";
 "prefs.misc.rwb_third_party.editor_body" = "Her satıra bir bundle id girin.";
 "prefs.misc.rwb_third_party.placeholder" = "com.example.widget\ncom.example.anotherwidget";
-"prefs.misc.language.title" = "Dil";
+
 "prefs.control_center.fullscreen_backdrop_blur_radius.title" = "Tam Ekran Bulanıklık Yarıçapı";
 "prefs.control_center.fullscreen_backdrop_blur_radius.subtitle" = "Orijinal Denetim Merkezi arka plan materyal bulanıklığını sınırlar. Düşük değerler tam ekran bulanıklığını daha hafif yapar.";
 "prefs.control_center.fullscreen_backdrop_dim_color.title" = "Tam Ekran Karartma";
 "prefs.control_center.fullscreen_backdrop_dim_color.subtitle" = "Tam ekran bulanıklığının üzerindeki katman rengi. Rengin alfa (opaklık) değeri karartma miktarını belirler.";
+
 "prefs.misc.import_export_section.title" = "Ayarları İçe/Dışa Aktar";
 "prefs.misc.import_export_section.subtitle" = "Düzeninizi paylaşın veya bir JSON dosyasından geri yükleyin.";
 "prefs.misc.export_prefs.title" = "Ayarları Dışa Aktar";
 "prefs.misc.export_prefs.subtitle" = "Paylaşılabilir bir JSON ayarlar dosyası oluşturur ve paylaşım menüsünü açar.";
 "prefs.misc.import_prefs.title" = "Ayarları İçe Aktar";
 "prefs.misc.import_prefs.subtitle" = "Bir JSON ayarlar dosyasını içe aktarır.";
+
 "prefs.misc.settings_controls.title" = "iOS 26 Ayarları";
 "prefs.misc.settings_controls.subtitle" = "iOS 26 Ayarlar uygulaması deneyimini taklit etmeye çalışır.";
-"prefs.surface.global_controls.title" = "Denetimler";
+
 "prefs.global_controls.exclusions.title" = "Hariç Tutma Listesi";
 "prefs.global_controls.exclusions.subtitle" = "Eşleşen bundle ID veya yürütülebilir dosya adlarında özel denetimleri atla.";
 "prefs.global_controls.exclusions.body" = "Her satıra bir bundle ID veya yürütülebilir dosya adı girin. Değişiklikler etkilenen uygulama yeniden açıldığında uygulanır.";
@@ -163,8 +180,3 @@
 "prefs.global_controls.sliders.subtitle" = "Standart kaydırıcıları akışkan kaydırıcılarla değiştirir.";
 "prefs.global_controls.segmented.title" = "Parçalı Denetimler";
 "prefs.global_controls.segmented.subtitle" = "Parçalı denetimlere akışkan seçim davranışı ekler.";
-
-"prefs.section.keyboard_geometry.title" = "Klavye Geometrisi";
-"prefs.section.keyboard_geometry.subtitle" = "Klavye camı için şekil ve aralıklar.";
-"prefs.control.keyboard_overhang" = "Üst Çıkıntı";
-"prefs.subtitle.keyboard_overhang" = "Tahmin çubuğu gizlendiğinde klavyenin üzerinde ayrılan ek yükseklik.";
