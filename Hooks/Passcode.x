@@ -5,7 +5,7 @@
 #import <objc/runtime.h>
 
 static const CGFloat kPCActiveScale         = 1.16;
-static const CGFloat kPCActiveLightTint     = 0.44;
+static const CGFloat kPCActiveLightTint     = 0.66;
 static const CGFloat kPCRestDarkTint        = 0.12;
 static const CGFloat kPCBackgroundDarkTint  = 0.2;
 static const CGFloat kPCPressMass = 0.8, kPCPressStiff = 300.0, kPCPressDamp = 18.0, kPCPressVel = 0.5, kPCPressDur = 0.3;

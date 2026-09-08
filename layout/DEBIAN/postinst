@@ -1,0 +1,4 @@
+#!/bin/sh
+rm -f /var/mobile/Library/Accessibility/liquidass-backboardd-guard.bin
+rm -f /var/mobile/Library/Accessibility/liquidass-backboardd-alert
+exit 0

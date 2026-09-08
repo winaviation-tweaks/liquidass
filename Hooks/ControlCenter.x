@@ -5,8 +5,6 @@
 #import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
 
-#pragma mark - taxonomy
-
 static CGFloat sCCSmallModuleRadius = 0.0;
 
 static UIView *ccModuleAncestor(UIView *v) {
@@ -30,13 +28,21 @@ static CGFloat ccModuleCornerRadius(UIView *module) {
     return sCCSmallModuleRadius > 0.0 ? sCCSmallModuleRadius : r;
 }
 
+static BOOL ccIsSliderView(UIView *view) {
+    Class cc = NSClassFromString(@"CCUIContinuousSliderView");
+    Class mru = NSClassFromString(@"MRUContinuousSliderView");
+    return view && ((cc && [view isKindOfClass:cc]) || (mru && [view isKindOfClass:mru]));
+}
+
+static UIView *ccSliderAncestor(UIView *view);
+
 static BOOL ccIsInsideSlider(UIView *mat) {
     return hasAncestorOfClassName(mat, @"CCUIContinuousSliderView") ||
            hasAncestorOfClassName(mat, @"MRUContinuousSliderView");
 }
 
 static BOOL ccHasSBElasticHierarchy(UIView *view) {
-    // volume hud reuses cc views so leave its elastic hierarchy alone
+
     UIView *candidate = view;
     for (NSInteger level = 0; candidate && level < 3; level++, candidate = candidate.superview) {
         NSString *className = NSStringFromClass(candidate.class);
@@ -49,18 +55,45 @@ static CGFloat ccPillRadius(UIView *v) {
     return fmin(CGRectGetWidth(v.bounds), CGRectGetHeight(v.bounds)) * 0.5;
 }
 
+static UIView *ccSliderAncestor(UIView *view) {
+    for (UIView *v = view; v; v = v.superview)
+        if (ccIsSliderView(v)) return v;
+    return nil;
+}
+
+static BOOL ccIsSliderFillMaterial(UIView *mat) {
+    UIView *slider = ccSliderAncestor(mat);
+    if (!slider) return NO;
+    for (UIView *v = mat.superview; v && v != slider; v = v.superview)
+        if (isExactClass(v, @"UIView") && v.layer.masksToBounds) return YES;
+    return NO;
+}
+
 static CGFloat ccGlassRadiusForMaterial(UIView *mat) {
     if (ccHasSBElasticHierarchy(mat)) return -1.0;
     if (!isExactClass(mat, @"MTMaterialView")) return -1.0;
-    if (!hasAncestorOfClassName(mat, @"CCUIContentModuleContainerView")) return -1.0;
+    BOOL inModule = hasAncestorOfClassName(mat, @"CCUIContentModuleContainerView");
+
+    if (ccIsInsideSlider(mat)) {
+        if (!inModule && !LGMaterialHasGlass(mat, kGlassKey)) return -1.0;
+        if (ccIsSliderFillMaterial(mat)) return -1.0;
+        UIView *slider = ccSliderAncestor(mat);
+        if (!slider) return -1.0;
+        if (CGRectGetWidth(slider.bounds) < 30.0 ||
+            CGRectGetHeight(slider.bounds) < 30.0) return -1.0;
+        return ccPillRadius(slider);
+    }
+
+    if (!inModule) {
+        UIView *parent = mat.superview;
+        BOOL expanded = (isExactClass(parent, @"CCUIContentModuleContentContainer") ||
+                         isExactClass(parent, @"CCUIContentModuleContentContainerView")) &&
+                        LGMaterialHasGlass(mat, kGlassKey);
+        return expanded ? mat.layer.cornerRadius : -1.0;
+    }
 
     CGFloat w = CGRectGetWidth(mat.bounds), h = CGRectGetHeight(mat.bounds);
     if (w < 30.0 || h < 30.0) return -1.0;
-
-    if (ccIsInsideSlider(mat)) {
-        if (isExactClass(mat.superview, @"MRUContinuousSliderView")) return ccPillRadius(mat);
-        return -1.0;
-    }
 
     UIView *module = ccModuleAncestor(mat);
     if (module && ccIsModuleCandidate(module)) return ccModuleCornerRadius(module);
@@ -68,8 +101,6 @@ static CGFloat ccGlassRadiusForMaterial(UIView *mat) {
     if (h > 100.0 && w < 100.0) return w * 0.5;
     return ccPillRadius(mat);
 }
-
-#pragma mark - fullscreen backdrop styling
 
 static void *kCCFullscreenBlurCapKey = &kCCFullscreenBlurCapKey;
 static void *kCCFullscreenDimViewKey = &kCCFullscreenDimViewKey;
@@ -162,7 +193,7 @@ static BOOL ccObjectHasBlurCap(id object) {
 }
 
 static void ccClampBlurFilter(id filter, CGFloat radius) {
-    // blur radius keys changed names across ios releases
+
     if (!filter) return;
     ccSetBlurCapMarker(filter, YES);
     for (NSString *key in @[@"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius"]) {
@@ -207,7 +238,7 @@ static void ccSetBlurCapOnLayerTree(CALayer *layer, BOOL enabled, CGFloat radius
 }
 
 static void ccClampBlurAnimation(CAAnimation *animation, CGFloat radius) {
-    // stock transitions can restore blur after the model value is clamped
+
     if (!animation) return;
 
     if ([animation isKindOfClass:CAAnimationGroup.class]) {
@@ -319,8 +350,6 @@ static UIView *ccFullscreenDimView(UIView *backdropMaterial, BOOL create) {
     }
     return dimView;
 }
-
-#pragma mark - fullscreen backdrop diagnostics
 
 static void ccApplyFullscreenBackdropStyle(UIView *overlayRoot) {
     if (!overlayRoot) return;
@@ -513,8 +542,6 @@ static void ccScheduleFullscreenBackdropStyle(UIView *overlayRoot) {
                    dispatch_get_main_queue(), ^{ ccApplyFullscreenBackdropStyle(weakRoot); });
 }
 
-#pragma mark - round-only fills
-
 static void *kCCRoundOriginalRadiusKey = &kCCRoundOriginalRadiusKey;
 static void *kCCRoundOriginalCurveKey = &kCCRoundOriginalCurveKey;
 static void *kCCRoundOriginalMasksKey = &kCCRoundOriginalMasksKey;
@@ -588,23 +615,95 @@ static void ccApplyOrRestoreRound(UIView *view, CGFloat radius, BOOL eligible) {
     lgRound(view, radius);
 }
 
-static void roundContinuousSliderFill(UIView *slider) {
-    BOOL eligible = !ccHasSBElasticHierarchy(slider);
+static void *kCCSliderDumpKey = &kCCSliderDumpKey;
+
+static void ccAppendSliderTree(NSMutableString *out, UIView *view, NSUInteger depth) {
+    NSString *pad = [@"" stringByPaddingToLength:depth * 2
+                                      withString:@" " startingAtIndex:0];
+    CALayer *layer = view.layer;
+    [out appendFormat:@"\n%@%@ frame=%@ radius=%.2f masks=%d hidden=%d alpha=%.2f"
+                      @" bg=%@ filters=%lu",
+        pad, NSStringFromClass(view.class), NSStringFromCGRect(view.frame),
+        layer.cornerRadius, layer.masksToBounds, view.hidden, view.alpha,
+        layer.backgroundColor ? @"set" : @"nil",
+        (unsigned long)([layer.filters count] + [layer.backgroundFilters count])];
+    if (isExactClass(view, @"MTMaterialView")) {
+        [out appendFormat:@" <MATERIAL exactUIViewParent=%d pill=%.2f glass=%d>",
+            isExactClass(view.superview, @"UIView"), ccPillRadius(view),
+            objc_getAssociatedObject(view, kGlassKey) != nil];
+    }
+    for (UIView *sub in view.subviews)
+        ccAppendSliderTree(out, sub, depth + 1);
+}
+
+static void ccDumpSliderHierarchy(UIView *slider, NSString *reason) {
+    if (!LGDebugLoggingEnabled() || !slider.window) return;
+
+    NSMutableString *signature = [NSMutableString string];
+    [signature appendFormat:@"%.0fx%.0f|", CGRectGetWidth(slider.bounds),
+                                           CGRectGetHeight(slider.bounds)];
     for (UIView *child in slider.subviews) {
-        if (!isExactClass(child, @"UIView")) continue;
-        for (UIView *gc in child.subviews)
-            if (isExactClass(gc, @"MTMaterialView"))
-                ccApplyOrRestoreRound(gc, ccPillRadius(gc), eligible);
+        [signature appendFormat:@"%@(%lu)", NSStringFromClass(child.class),
+                                (unsigned long)child.subviews.count];
+    }
+    NSString *previous = objc_getAssociatedObject(slider, kCCSliderDumpKey);
+    if ([previous isEqualToString:signature]) return;
+    objc_setAssociatedObject(slider, kCCSliderDumpKey, signature,
+                             OBJC_ASSOCIATION_COPY_NONATOMIC);
+
+    NSMutableString *out = [NSMutableString stringWithFormat:
+        @"[CCSLIDER] reason=%@ ios=%@ class=%@ elastic=%d",
+        reason, UIDevice.currentDevice.systemVersion,
+        NSStringFromClass(slider.class), ccHasSBElasticHierarchy(slider)];
+    ccAppendSliderTree(out, slider, 1);
+
+    UIView *parent = slider.superview;
+    if (parent) {
+        [out appendFormat:@"\n  --- parent %@ %@ ---",
+            NSStringFromClass(parent.class), NSStringFromCGRect(parent.frame)];
+        for (UIView *sibling in parent.subviews) {
+            if (sibling == slider) { [out appendString:@"\n    (this slider)"]; continue; }
+            [out appendFormat:@"\n    %@ frame=%@ radius=%.2f hidden=%d",
+                NSStringFromClass(sibling.class), NSStringFromCGRect(sibling.frame),
+                sibling.layer.cornerRadius, sibling.hidden];
+            for (UIView *sub in sibling.subviews)
+                [out appendFormat:@"\n      %@ frame=%@ radius=%.2f",
+                    NSStringFromClass(sub.class), NSStringFromCGRect(sub.frame),
+                    sub.layer.cornerRadius];
+        }
+    }
+    LGLog(@"%@", out);
+}
+
+static void ccRoundMaterialsInSubtree(UIView *view, CGFloat radius,
+                                      BOOL eligible, NSUInteger depth) {
+    if (depth > 6) return;
+    for (UIView *sub in view.subviews) {
+        if (isExactClass(sub, @"MTMaterialView")) {
+            ccApplyOrRestoreRound(sub, radius, eligible);
+            CGFloat glassRadius = ccGlassRadiusForMaterial(sub);
+            if (glassRadius >= 0.0 && LGMaterialHasGlass(sub, kGlassKey))
+                LGInstallRegisteredGlassInMaterial(sub, kGlassKey, @"ControlCenter",
+                                                   UIEdgeInsetsZero, glassRadius, nil);
+        } else {
+            ccRoundMaterialsInSubtree(sub, radius, eligible, depth + 1);
+        }
     }
 }
 
-static void roundMRUSliderFill(UIView *slider) {
+static void roundSliderMaterials(UIView *slider) {
     BOOL eligible = !ccHasSBElasticHierarchy(slider);
-    for (UIView *child in slider.subviews) {
-        if (!isExactClass(child, @"UIView")) continue;
-        for (UIView *gc in child.subviews)
-            if (isExactClass(gc, @"MTMaterialView"))
-                ccApplyOrRestoreRound(gc, ccPillRadius(gc), eligible);
+
+    CGFloat radius = ccPillRadius(slider);
+    if (radius <= 0.0) return;
+    ccRoundMaterialsInSubtree(slider, radius, eligible, 0);
+
+    UIView *parent = slider.superview;
+    if (isExactClass(parent, @"CCUIContentModuleContentContainerView")) {
+        for (UIView *sibling in parent.subviews) {
+            if (sibling == slider || !isExactClass(sibling, @"MTMaterialView")) continue;
+            ccApplyOrRestoreRound(sibling, radius, eligible);
+        }
     }
 }
 
@@ -629,11 +728,30 @@ static void roundModuleContainer(UIView *module) {
             ccApplyOrRestoreRound(sub, r, eligible);
 }
 
-#pragma mark - hooks
+static void ccRefreshContentContainerGlass(UIView *container) {
+    for (UIView *material in container.subviews) {
+        if (!isExactClass(material, @"MTMaterialView") ||
+            !LGMaterialHasGlass(material, kGlassKey)) continue;
+        CGFloat radius = ccGlassRadiusForMaterial(material);
+        if (radius >= 0.0)
+            LGInstallRegisteredGlassInMaterial(material, kGlassKey, @"ControlCenter",
+                                               UIEdgeInsetsZero, radius, nil);
+    }
+}
+
+%group LGControlCenterHooks
 
 %hook CCUIContentModuleContainerView
 - (void)layoutSubviews { %orig; roundModuleContainer((UIView *)self); }
 - (void)didMoveToWindow { %orig; roundModuleContainer((UIView *)self); }
+%end
+
+%hook CCUIContentModuleContentContainerView
+- (void)layoutSubviews { %orig; ccRefreshContentContainerGlass((UIView *)self); }
+%end
+
+%hook CCUIContentModuleContentContainer
+- (void)layoutSubviews { %orig; ccRefreshContentContainerGlass((UIView *)self); }
 %end
 
 %hook CCUIButtonModuleView
@@ -642,13 +760,29 @@ static void roundModuleContainer(UIView *module) {
 %end
 
 %hook CCUIContinuousSliderView
-- (void)layoutSubviews { %orig; roundContinuousSliderFill((UIView *)self); }
-- (void)didMoveToWindow { %orig; roundContinuousSliderFill((UIView *)self); }
+- (void)layoutSubviews {
+    %orig;
+    roundSliderMaterials((UIView *)self);
+    ccDumpSliderHierarchy((UIView *)self, @"layout");
+}
+- (void)didMoveToWindow {
+    %orig;
+    roundSliderMaterials((UIView *)self);
+    ccDumpSliderHierarchy((UIView *)self, @"window");
+}
 %end
 
 %hook MRUContinuousSliderView
-- (void)layoutSubviews { %orig; roundMRUSliderFill((UIView *)self); }
-- (void)didMoveToWindow { %orig; roundMRUSliderFill((UIView *)self); }
+- (void)layoutSubviews {
+    %orig;
+    roundSliderMaterials((UIView *)self);
+    ccDumpSliderHierarchy((UIView *)self, @"layout");
+}
+- (void)didMoveToWindow {
+    %orig;
+    roundSliderMaterials((UIView *)self);
+    ccDumpSliderHierarchy((UIView *)self, @"window");
+}
 %end
 
 %hook CCUIModularControlCenterOverlayViewController
@@ -765,7 +899,11 @@ static void roundModuleContainer(UIView *module) {
 
 %end
 
+%end
+
 %ctor {
+    if (!LGIsSpringBoardProcess()) return;
+    %init(LGControlCenterHooks);
     lgObservePreferenceReload(^{
         if (!lgHostEnabled(@"ControlCenter")) ccRestoreAllRoundedViews();
         for (UIView *root in ccOverlayRoots().allObjects) {

@@ -3,8 +3,11 @@
 #import "LGPrefsSurfaceCatalog.h"
 #import "LGPrefsDataSupport.h"
 #import "LGPrefsUIHelpers.h"
+#import "../Shared/LGSharedSupport.h"
 #import <QuartzCore/QuartzCore.h>
+#import <objc/message.h>
 #import <objc/runtime.h>
+#import <notify.h>
 
 @interface LGPRootListController () <UIScrollViewDelegate>
 @property (nonatomic, strong) UIScrollView *lg_scrollView;
@@ -12,6 +15,7 @@
 @property (nonatomic, strong) NSArray<UIButton *> *lg_menuButtons;
 @property (nonatomic, strong) UIView *lg_respringBar;
 @property (nonatomic, strong) UISwitch *lg_globalToggle;
+@property (nonatomic, strong) UIButton *lg_safeModeButton;
 @property (nonatomic, assign) CFTimeInterval lg_lastFloatingGlassScrollRefreshTime;
 @end
 
@@ -44,15 +48,20 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
     UIView *miscSection = [self rootSectionViewWithTitle:LGLocalized(@"prefs.section.misc.title")
                                                 subtitle:nil];
     UIButton *respringButton = (UIButton *)[self navCardWithTitle:LGLocalized(@"prefs.misc.respring.title") subtitle:LGLocalized(@"prefs.misc.respring.subtitle") color:[UIColor systemOrangeColor] symbolName:@"arrow.counterclockwise.circle.fill" action:@selector(handleRespringPressed)];
+    UIButton *safeModeButton = (UIButton *)[self navCardWithTitle:LGLocalized(@"prefs.misc.exit_safe_mode.title") subtitle:LGLocalized(@"prefs.misc.exit_safe_mode.subtitle") color:[UIColor systemRedColor] symbolName:@"exclamationmark.circle.fill" action:@selector(handleExitSafeModePressed)];
+    self.lg_safeModeButton = safeModeButton;
     UIButton *aboutButton = (UIButton *)[self navCardWithTitle:LGPrefsSurfaceTitle(LGPrefsSurfaceSettings) subtitle:LGPrefsSurfaceSubtitle(LGPrefsSurfaceSettings) color:LGPrefsSurfaceTintColor(LGPrefsSurfaceSettings) symbolName:LGPrefsSurfaceSymbolName(LGPrefsSurfaceSettings) action:@selector(openPrefsSettings)];
+    UIButton *supportButton = (UIButton *)[self navCardWithTitle:LGLocalized(@"prefs.misc.support.title") subtitle:LGLocalized(@"prefs.misc.support.subtitle") color:[UIColor colorWithRed:0.345 green:0.396 blue:0.949 alpha:1.0] image:[self discordIcon] action:@selector(handleSupportPressed)];
     self.lg_menuButtons = @[surfacesButton];
     [self.lg_stackView addArrangedSubview:mainSection];
     [self.lg_stackView addArrangedSubview:[self globalToggleCard]];
     [self.lg_stackView addArrangedSubview:[self groupedRootNavPanelForButtons:@[surfacesButton]]];
     [self.lg_stackView addArrangedSubview:miscSection];
-    [self.lg_stackView addArrangedSubview:[self groupedRootNavPanelForButtons:@[moreOptionsButton, respringButton, aboutButton]]];
+    [self.lg_stackView addArrangedSubview:[self groupedRootNavPanelForButtons:@[moreOptionsButton, respringButton, safeModeButton, aboutButton]]];
     [self.lg_stackView addArrangedSubview:[self runtimeCacheFooterView]];
+    [self.lg_stackView addArrangedSubview:[self groupedRootNavPanelForButtons:@[supportButton]]];
     [self updateMenuAvailability];
+    [self updateSafeModeAvailability];
 }
 
 - (NSArray *)specifiers {
@@ -90,6 +99,7 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
     [super viewDidAppear:animated];
     [self.lg_globalToggle setOn:[self isGlobalEnabled] animated:NO];
     [self updateMenuAvailability];
+    [self updateSafeModeAvailability];
     [self updateRespringBarAnimated:NO];
     LGRefreshCircularBackItem(self.navigationItem.rightBarButtonItem);
     LGScheduleRespringBarGlassRefresh(self.lg_respringBar);
@@ -109,6 +119,7 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
 }
 
 - (void)handleBackPressed {
+    if (self.navigationController && self.navigationController.topViewController != self) return;
     [self.navigationController popViewControllerAnimated:YES];
 }
 
@@ -123,7 +134,7 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
 }
 
 - (void)handleSliderValueLabelTapped:(UITapGestureRecognizer *)gesture {
-    LGPresentSliderValuePrompt(self, (UILabel *)gesture.view);
+    LGPresentSliderValuePrompt(self, (UILabel *)gesture.view, nil);
 }
 
 - (void)handleSliderInfoPressed:(UIButton *)sender {
@@ -139,6 +150,13 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
         button.alpha = enabled ? 1.0 : 0.42;
         button.userInteractionEnabled = enabled;
     }
+}
+
+- (void)updateSafeModeAvailability {
+    BOOL active = LGBackboardSafeModeActive();
+    self.lg_safeModeButton.enabled = active;
+    self.lg_safeModeButton.userInteractionEnabled = active;
+    self.lg_safeModeButton.alpha = active ? 1.0 : 0.42;
 }
 
 - (void)handlePrefsUIRefresh:(NSNotification *)notification {
@@ -436,6 +454,16 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
 }
 
 - (UIView *)navCardWithTitle:(NSString *)title subtitle:(NSString *)subtitle color:(UIColor *)color symbolName:(NSString *)symbolName action:(SEL)action {
+    return [self navCardWithTitle:title subtitle:subtitle color:color
+                            image:nil symbolName:symbolName action:action];
+}
+
+- (UIView *)navCardWithTitle:(NSString *)title subtitle:(NSString *)subtitle color:(UIColor *)color image:(UIImage *)image action:(SEL)action {
+    return [self navCardWithTitle:title subtitle:subtitle color:color
+                            image:image symbolName:nil action:action];
+}
+
+- (UIView *)navCardWithTitle:(NSString *)title subtitle:(NSString *)subtitle color:(UIColor *)color image:(UIImage *)image symbolName:(NSString *)symbolName action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.backgroundColor = LGSubpageCardBackgroundColor();
     button.layer.cornerRadius = 23.25;
@@ -451,7 +479,18 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
     chip.layer.cornerRadius = 18.0;
     chip.layer.cornerCurve = kCACornerCurveContinuous;
 
-    UIView *glyph = LGMakeNavCardGlyphView(symbolName, color);
+    UIView *glyph = image ? [[UIImageView alloc] initWithImage:image]
+                          : LGMakeNavCardGlyphView(symbolName, color);
+    if (image) {
+        glyph.translatesAutoresizingMaskIntoConstraints = NO;
+        ((UIImageView *)glyph).contentMode = UIViewContentModeScaleAspectFit;
+        glyph.layer.cornerRadius = 4.0;
+        glyph.layer.masksToBounds = YES;
+        [NSLayoutConstraint activateConstraints:@[
+            [glyph.widthAnchor constraintEqualToConstant:20.0],
+            [glyph.heightAnchor constraintEqualToConstant:20.0],
+        ]];
+    }
     [chip addSubview:glyph];
 
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectZero];
@@ -501,6 +540,19 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
     return button;
 }
 
+- (UIImage *)discordIcon {
+    SEL selector = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
+    UIApplication *application = UIApplication.sharedApplication;
+    UIImage *icon = [application respondsToSelector:selector]
+        ? ((UIImage *(*)(id, SEL, NSString *, NSInteger, CGFloat))objc_msgSend)(
+              application, selector, @"com.hammerandchisel.discord", 2,
+              UIScreen.mainScreen.scale)
+        : nil;
+    NSBundle *bundle = [NSBundle bundleForClass:self.class];
+    return icon ?: [UIImage imageNamed:@"discord" inBundle:bundle
+                 compatibleWithTraitCollection:nil];
+}
+
 - (void)pushSurfaceWithIdentifier:(NSString *)identifier {
     LGPSurfaceController *controller = [[LGPSurfaceController alloc] initWithTitle:LGPrefsSurfaceTitle(identifier)
                                                                           subtitle:LGPrefsSurfaceSubtitle(identifier)
@@ -530,6 +582,20 @@ static NSString *LGFormatRuntimeCacheUsage(unsigned long long bytes) {
     LGSetRespringBarDismissed(YES);
     [self updateRespringBarAnimated:YES];
     LGPresentRespringConfirmation(self);
+}
+
+- (void)handleExitSafeModePressed {
+    if (!LGBackboardSafeModeActive()) {
+        [self updateSafeModeAvailability];
+        return;
+    }
+    LGClearBackboardSafeMode();
+    notify_post(LGPrefsRespringNotificationCString);
+}
+
+- (void)handleSupportPressed {
+    NSURL *url = [NSURL URLWithString:@"https://discord.gg/YWp5DVb4kC"];
+    [UIApplication.sharedApplication openURL:url options:@{} completionHandler:nil];
 }
 
 - (void)handleLaterPressed {

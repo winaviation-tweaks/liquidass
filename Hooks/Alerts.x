@@ -1,4 +1,3 @@
-#import "../Shared/LGSharedSupport.h"
 #import "../Shared/LGGlassKit.h"
 #import "../Shared/LGLiveBackdropView.h"
 #import <objc/runtime.h>
@@ -23,6 +22,47 @@ static BOOL LGAlertsEnabled(void) {
     return lgHostEnabled(@"Alerts");
 }
 
+static UIAlertController *LGAlertControllerForView(UIView *view) {
+    if (!view) return nil;
+    for (UIResponder *responder = view; responder; responder = responder.nextResponder) {
+        if ([responder isKindOfClass:[UIAlertController class]]) {
+            return (UIAlertController *)responder;
+        }
+    }
+    for (UIView *ancestor = view; ancestor; ancestor = ancestor.superview) {
+        Ivar ivar = class_getInstanceVariable(object_getClass(ancestor), "_alertController");
+        if (ivar) {
+            id ctrl = object_getIvar(ancestor, ivar);
+            if ([ctrl isKindOfClass:[UIAlertController class]]) return (UIAlertController *)ctrl;
+        }
+    }
+    Ivar contentIvar = class_getInstanceVariable(object_getClass(view), "_actionContentView");
+    if (contentIvar) {
+        id contentView = object_getIvar(view, contentIvar);
+        if (contentView) {
+            Ivar ctrlIvar = class_getInstanceVariable(object_getClass(contentView), "_alertController");
+            if (ctrlIvar) {
+                id ctrl = object_getIvar(contentView, ctrlIvar);
+                if ([ctrl isKindOfClass:[UIAlertController class]]) return (UIAlertController *)ctrl;
+            }
+        }
+    }
+    return nil;
+}
+
+static BOOL LGAlertIsAlertStyle(UIView *view) {
+    UIAlertController *controller = LGAlertControllerForView(view);
+    if (controller) {
+        return controller.preferredStyle == UIAlertControllerStyleAlert;
+    }
+    for (UIView *ancestor = view; ancestor; ancestor = ancestor.superview) {
+        if ([NSStringFromClass(ancestor.class) hasPrefix:@"_UIAlertControllerPhoneTVMacView"]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static UIView *LGAlertFindViewWithClassPrefix(UIView *view, NSString *prefix) {
     if (!view) return nil;
     NSString *className = NSStringFromClass(view.class);
@@ -35,13 +75,8 @@ static UIView *LGAlertFindViewWithClassPrefix(UIView *view, NSString *prefix) {
 }
 
 static UIView *LGAlertStockChromeView(UIView *view) {
-
-    UIView *chrome = LGAlertFindViewWithClassPrefix(
-        view, @"_UIAlertControllerPhoneTVMacView");
-    if (chrome) return chrome;
-
     return LGAlertFindViewWithClassPrefix(
-        view, @"_UIAlertControllerInterfaceActionGroupView");
+        view, @"_UIAlertControllerPhoneTVMacView");
 }
 
 static BOOL LGAlertViewHasBackdropAncestor(UIView *view, UIView *chrome) {
@@ -55,7 +90,7 @@ static BOOL LGAlertViewHasBackdropAncestor(UIView *view, UIView *chrome) {
 
 static void LGAlertCollectStockBackdrops(UIView *root, UIView *chrome,
                                          NSMutableArray<UIView *> *matches) {
-    // only hide effects that belong to the alert chrome
+
     for (UIView *subview in root.subviews) {
         if ([subview isKindOfClass:LGLiveBackdropView.class]) continue;
         NSString *className = NSStringFromClass(subview.class);
@@ -318,7 +353,7 @@ static void LGAlertFindNearestActionBelowY(UIView *root, UIWindow *window,
 static void LGAlertStyleHeaderLabels(UIView *headerScrollView);
 
 static void LGAlertScheduleHeaderStyle(UIView *headerScrollView) {
-    if (!LGAlertsEnabled()) return;
+    if (!LGAlertsEnabled() || !LGAlertIsAlertStyle(headerScrollView)) return;
     if (!headerScrollView.window ||
         [objc_getAssociatedObject(headerScrollView,
                                   kLGAlertHeaderLayoutPendingKey) boolValue]) return;
@@ -334,7 +369,7 @@ static void LGAlertScheduleHeaderStyle(UIView *headerScrollView) {
 }
 
 static void LGAlertStyleHeaderLabels(UIView *headerScrollView) {
-    if (!LGAlertsEnabled()) return;
+    if (!LGAlertsEnabled() || !LGAlertIsAlertStyle(headerScrollView)) return;
     for (UIView *child in headerScrollView.subviews) {
         NSMutableArray<UILabel *> *labels = [NSMutableArray array];
         for (UIView *grandchild in child.subviews) {
@@ -425,17 +460,24 @@ static void LGAlertStyleHeaderLabels(UIView *headerScrollView) {
 }
 
 static void LGAlertInvalidateActionHierarchy(UIView *representation) {
+    BOOL isAlert = LGAlertIsAlertStyle(representation);
     for (UIView *ancestor = representation; ancestor; ancestor = ancestor.superview) {
         if ([ancestor isKindOfClass:UIStackView.class]) {
             UIStackView *stack = (UIStackView *)ancestor;
-            BOOL horizontalPair =
-                stack.axis == UILayoutConstraintAxisHorizontal &&
-                stack.arrangedSubviews.count == 2;
-            stack.layoutMargins = horizontalPair
-                ? UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0)
-                : UIEdgeInsetsMake(16.0, 0.0, 16.0, 0.0);
-            stack.layoutMarginsRelativeArrangement = YES;
-            stack.spacing = stack.arrangedSubviews.count > 1 ? 8.0 : 0.0;
+            if (isAlert) {
+                BOOL horizontalPair =
+                    stack.axis == UILayoutConstraintAxisHorizontal &&
+                    stack.arrangedSubviews.count == 2;
+                stack.layoutMargins = horizontalPair
+                    ? UIEdgeInsetsMake(16.0, 16.0, 16.0, 16.0)
+                    : UIEdgeInsetsMake(16.0, 0.0, 16.0, 0.0);
+                stack.layoutMarginsRelativeArrangement = YES;
+                stack.spacing = stack.arrangedSubviews.count > 1 ? 8.0 : 0.0;
+            } else {
+                stack.layoutMargins = UIEdgeInsetsZero;
+                stack.layoutMarginsRelativeArrangement = NO;
+                stack.spacing = 0.0;
+            }
         }
         [ancestor invalidateIntrinsicContentSize];
         [ancestor setNeedsUpdateConstraints];
@@ -481,9 +523,12 @@ static void LGAlertStyleActionRepresentation(UIView *representation) {
         leftInset = slotMinX <= 1.0 ? 16.0 : 0.0;
         rightInset = slotMaxX >= containerWidth - 1.0 ? 16.0 : 0.0;
     }
-    background.frame = CGRectMake(leftInset, 0.0,
+    CGFloat slotHeight = CGRectGetHeight(representation.bounds);
+    CGFloat pillHeight = (slotHeight > 0.0 && slotHeight < 48.0) ? slotHeight : 48.0;
+    CGFloat y = (slotHeight > pillHeight) ? (slotHeight - pillHeight) * 0.5 : 0.0;
+    background.frame = CGRectMake(leftInset, y,
         MAX(0.0, CGRectGetWidth(representation.bounds) - leftInset - rightInset),
-        48.0);
+        pillHeight);
     background.layer.cornerRadius = CGRectGetHeight(background.bounds) * 0.5;
     background.layer.masksToBounds = YES;
     BOOL highlighted = [objc_getAssociatedObject(representation,
@@ -680,12 +725,14 @@ static void LGAlertProbeHierarchy(UIAlertController *controller, NSString *reaso
 
 - (void)didMoveToWindow {
     %orig;
-    LGAlertStyleHeaderLabels((UIView *)self);
+    if (LGAlertsEnabled() && LGAlertIsAlertStyle((UIView *)self))
+        LGAlertStyleHeaderLabels((UIView *)self);
 }
 
 - (void)layoutSubviews {
     %orig;
-    LGAlertStyleHeaderLabels((UIView *)self);
+    if (LGAlertsEnabled() && LGAlertIsAlertStyle((UIView *)self))
+        LGAlertStyleHeaderLabels((UIView *)self);
 }
 
 %end
@@ -694,13 +741,25 @@ static void LGAlertProbeHierarchy(UIAlertController *controller, NSString *reaso
 
 - (CGSize)intrinsicContentSize {
     CGSize size = %orig;
-    if (LGAlertsEnabled()) size.height = 48.0;
+    if (LGAlertsEnabled()) {
+        if (LGAlertIsAlertStyle((UIView *)self)) {
+            size.height = 48.0;
+        } else {
+            size.height = MAX(size.height, 57.0);
+        }
+    }
     return size;
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
     CGSize fitted = %orig;
-    if (LGAlertsEnabled()) fitted.height = 48.0;
+    if (LGAlertsEnabled()) {
+        if (LGAlertIsAlertStyle((UIView *)self)) {
+            fitted.height = 48.0;
+        } else {
+            fitted.height = MAX(fitted.height, 57.0);
+        }
+    }
     return fitted;
 }
 
@@ -819,6 +878,50 @@ static void LGAlertProbeHierarchy(UIAlertController *controller, NSString *reaso
 
 %end
 
+%hook _UIAlertControlleriOSActionSheetCancelBackgroundView
+
+- (void)didMoveToWindow {
+    %orig;
+    if (LGAlertsEnabled()) {
+        ((UIView *)self).hidden = YES;
+        ((UIView *)self).alpha = 0.0;
+    }
+}
+
+- (void)layoutSubviews {
+    %orig;
+    if (LGAlertsEnabled()) {
+        ((UIView *)self).hidden = YES;
+        ((UIView *)self).alpha = 0.0;
+    }
+}
+
+- (void)setHidden:(BOOL)hidden {
+    if (LGAlertsEnabled()) hidden = YES;
+    %orig(hidden);
+}
+
+- (void)setAlpha:(CGFloat)alpha {
+    if (LGAlertsEnabled()) alpha = 0.0;
+    %orig(alpha);
+}
+
+%end
+
+%hook _UIAlertControllerInterfaceActionGroupView
+
+- (void)layoutSubviews {
+    %orig;
+    if (LGAlertsEnabled()) {
+        UIView *view = (UIView *)self;
+        if (@available(iOS 13.0, *)) {
+            view.layer.cornerCurve = kCACornerCurveContinuous;
+        }
+    }
+}
+
+%end
+
 %hook UIAlertController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -846,6 +949,5 @@ static void LGAlertProbeHierarchy(UIAlertController *controller, NSString *reaso
 %end
 
 %ctor {
-    if (!LGIsSpringBoardProcess() && !LGIsPreferencesProcess()) return;
     %init(LGAlertsSpringBoard);
 }

@@ -40,7 +40,9 @@ void LGInstallScrollableStack(UIViewController *controller,
 void LGInstallBottomRespringBar(UIViewController *controller, UIView *__strong *respringBarOut);
 void LGRefreshRespringBarGlass(UIView *respringBar);
 void LGScheduleRespringBarGlassRefresh(UIView *respringBar);
-void LGPresentSliderValuePrompt(UIViewController *controller, UILabel *valueLabel);
+void LGPresentSliderValuePrompt(UIViewController *controller,
+                                UILabel *valueLabel,
+                                void (^commitBlock)(CGFloat value));
 void LGAnimateSliderToDefault(UISlider *slider, CGFloat targetValue, UILabel *valueLabel, NSInteger decimals);
 UIBarButtonItem *LGMakeCircularBackItem(id target, SEL action);
 void LGRefreshCircularBackItem(UIBarButtonItem *item);
@@ -72,6 +74,8 @@ void LGPresentMultilineTextInputSheet(UIViewController *controller,
                                       NSString *placeholder,
                                       void (^applyBlock)(NSString *text));
 void LGPresentPreferencesExport(UIViewController *controller);
+void LGPresentDiagnosticsExport(UIViewController *controller);
 BOOL LGImportPreferencesFromURL(UIViewController *controller, NSURL *url);
 void LGPresentThirdPartyRWBEditor(UIViewController *controller);
 void LGPresentGlobalControlsExclusionEditor(UIViewController *controller);
+void LGPresentTabBarExclusionEditor(UIViewController *controller);

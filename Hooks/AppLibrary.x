@@ -1,9 +1,8 @@
 #import <UIKit/UIKit.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
+#import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
-
-#pragma mark - search pill
 
 static BOOL isAppLibrarySearchMaterial(UIView *material) {
     if (!hasAncestorOfClassName(material, @"SBHSearchTextField")) return NO;
@@ -16,8 +15,6 @@ static BOOL isAppLibrarySearchMaterial(UIView *material) {
     return YES;
 }
 
-#pragma mark - category pods
-
 static void injectAppLibraryPod(UIView *pod) {
     CGRect bounds = pod.bounds;
     if (CGRectGetWidth(bounds) < 2.0 || CGRectGetHeight(bounds) < 2.0) return;
@@ -27,6 +24,8 @@ static void injectAppLibraryPod(UIView *pod) {
     LGInstallRegisteredGlassInMaterial(pod, kGlassKey, @"AppLibrary",
                                        UIEdgeInsetsZero, radius, nil);
 }
+
+%group LGAppLibraryHooks
 
 %hook SBHLibraryCategoryPodBackgroundView
 - (void)didMoveToWindow {
@@ -48,7 +47,11 @@ static void injectAppLibraryPod(UIView *pod) {
 }
 %end
 
+%end
+
 %ctor {
+    if (!LGIsSpringBoardProcess()) return;
+    %init(LGAppLibraryHooks);
     LGRegisterMaterialHost(@"AppLibSearch", 90, ^BOOL(UIView *material) {
         return isAppLibrarySearchMaterial(material);
     }, UIEdgeInsetsZero, ^CGFloat(UIView *material) {

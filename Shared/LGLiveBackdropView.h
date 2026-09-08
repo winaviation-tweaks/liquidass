@@ -25,7 +25,14 @@ NSString *LGFilterTypeForHostPrefix(NSString *prefix);
 
 - (instancetype)initWithFrame:(CGRect)frame groupName:(NSString *)groupName
                    filterType:(NSString *)filterType;
+@property (nonatomic, assign) CGRect lgShapeRect;
+@property (nonatomic, assign) CGFloat lgShapeCornerRadius;
+
 - (void)applyFilters;
+- (void)lgInvalidateFilterContents;
+- (BOOL)lgFilterAttached;
+
+@property (nonatomic, assign) CGFloat lgBackdropZoom;
 @end
 
 void LGInjectGlassIntoMaterialGroupType(UIView *materialView, const void *assocKey,

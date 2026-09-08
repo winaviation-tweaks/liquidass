@@ -1,4 +1,3 @@
-// creds to owngoalstudios remove widget background
 
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
@@ -27,7 +26,7 @@ static NSArray<NSString *> *RWBParseThirdPartyBundleIDs(NSString *rawText) {
 
 static void ReloadPrefs(void) {
     LGReloadPreferences();
-    kIsEnabled = YES;
+    kIsEnabled = LG_globalEnabled() && LG_prefBool(@"Widgets.Enabled", YES);
     kIsEnabledForSystemWidgets = YES;
     kIsEnabledForMaterialView = NO;
     kForceDarkMode = YES;

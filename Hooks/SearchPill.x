@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
+#import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
 
 static BOOL isSearchPillMaterial(UIView *mat) {
@@ -9,6 +10,7 @@ static BOOL isSearchPillMaterial(UIView *mat) {
 }
 
 %ctor {
+    if (!LGIsSpringBoardProcess()) return;
     LGRegisterMaterialHost(@"SearchPill", 100, ^BOOL(UIView *material) {
         return isSearchPillMaterial(material);
     }, UIEdgeInsetsZero, ^CGFloat(UIView *material) {

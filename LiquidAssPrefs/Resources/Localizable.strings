@@ -1,7 +1,6 @@
 "prefs.app_name" = "Liquid (Gl)ass";
 
 "prefs.control.enabled" = "Enabled";
-"prefs.control.bezel_ratio" = "Bezel Ratio";
 "prefs.control.blur" = "Blur";
 "prefs.control.corner_radius" = "Corner Radius";
 "prefs.control.glass_thickness" = "Glass Thickness";
@@ -21,9 +20,12 @@
 "prefs.control.variable_font_softness" = "Softness";
 "prefs.control.motion_highlights" = "Motion Highlights";
 "prefs.control.motion_highlights_sensitivity" = "Motion Sensitivity";
+"prefs.notification.label_color.title" = "Label Color";
+"prefs.notification.label_color.subtitle" = "Choose white or black notification text.";
+"prefs.color.white" = "White";
+"prefs.color.black" = "Black";
 
 "prefs.subtitle.enabled" = "Turn this glass view on or off.";
-"prefs.subtitle.bezel_ratio" = "Width of the refracting edge relative to the glass view's short side.";
 "prefs.subtitle.blur" = "Softness of the glass view.";
 "prefs.subtitle.corner_radius" = "Roundness of the glass view.";
 "prefs.subtitle.glass_thickness" = "Depth of the glass volume, visually it does not change anything much.";
@@ -67,7 +69,7 @@
 "prefs.button.reset" = "Reset";
 "prefs.button.cancel" = "Cancel";
 "prefs.app_icons_warning.title" = "Enable App Icons?";
-"prefs.app_icons_warning.body" = "Be aware that enabling app icons will be VERY laggy. DO NOT complain about lag issues if you have this surface enabled, thank you.";
+"prefs.app_icons_warning.body" = "Be aware that enabling app icons will be VERY laggy. DO NOT complain about lag issues if you have this surface enabled, thank you.\n\nAdditionally, this surface is only meant to pair with transparent icon packs (Liquid glAss by timbovill for example), don't enable this surface if you don't have one active.";
 "prefs.app_icons_warning.confirm" = "Enable";
 "prefs.button.more" = "More";
 "prefs.button.respring" = "Respring";
@@ -123,8 +125,18 @@
 "prefs.surface.keyboard.title" = "Keyboard";
 "prefs.surface.tab_bar.title" = "Tab Bar";
 "prefs.surface.tab_bar_selection.title" = "Selection Lens";
+"prefs.surface.assistive_touch.title" = "AssistiveTouch";
+"prefs.surface.assistive_touch.subtitle" = "Customize AssistiveTouch liquid glass button";
+"prefs.surface.volume_hud.title" = "Volume HUD";
+"prefs.surface.volume_hud.subtitle" = "Sidebar elastic volume slider";
+"prefs.surface.pill_hud.title" = "Pill HUDs";
+"prefs.surface.pill_hud.subtitle" = "Mute, ringer, and DND alert pills";
 "prefs.misc.respring.title" = "Respring";
 "prefs.misc.respring.subtitle" = "Restart SpringBoard";
+"prefs.misc.exit_safe_mode.title" = "Exit Safe Mode";
+"prefs.misc.exit_safe_mode.subtitle" = "Exit Liquid (Gl)ass safe mode if active.";
+"prefs.misc.support.title" = "Join our Support Server";
+"prefs.misc.support.subtitle" = "Get help and updates on Discord";
 "prefs.misc.about.title" = "More Options";
 "prefs.misc.about.subtitle" = "Additional controls and advanced preferences.";
 "prefs.misc.prefs_settings.title" = "About";
@@ -155,6 +167,10 @@
 "prefs.global_controls.exclusions.subtitle" = "Skip custom controls in matching bundle IDs or executable names.";
 "prefs.global_controls.exclusions.body" = "Enter one bundle ID or executable name per line. Changes apply after reopening the affected app.";
 "prefs.global_controls.exclusions.placeholder" = "com.example.app\nExampleExecutable";
+"prefs.tab_bar.exclusions.title" = "Exclusion List";
+"prefs.tab_bar.exclusions.subtitle" = "Skip tab bars in matching bundle IDs or executable names.";
+"prefs.tab_bar.exclusions.body" = "Enter one bundle ID or executable name per line. Changes apply after reopening the affected app.";
+"prefs.tab_bar.exclusions.placeholder" = "com.example.app\nExampleExecutable";
 "prefs.global_controls.section.title" = "Custom Controls";
 "prefs.global_controls.section.subtitle" = "Choose which system controls are replaced across apps.";
 "prefs.global_controls.switches.title" = "Switches";
@@ -166,5 +182,21 @@
 
 "prefs.section.keyboard_geometry.title" = "Keyboard Geometry";
 "prefs.section.keyboard_geometry.subtitle" = "Shape and spacing for the keyboard glass.";
+"prefs.control.keyboard_custom_font" = "Custom Font";
+"prefs.subtitle.keyboard_custom_font" = "Use the bundled SF Compact font for keyboard keys.";
+"prefs.control.keyboard_key_radius" = "Key Corner Radius";
+"prefs.subtitle.keyboard_key_radius" = "Corner radius used when rendering keyboard keys.";
 "prefs.control.keyboard_overhang" = "Overhang";
 "prefs.subtitle.keyboard_overhang" = "Extra height reserved above the keyboard when the prediction bar is hidden.";
+"prefs.misc.debug_logging.title" = "Debug Logging";
+"prefs.misc.debug_logging.subtitle" = "Writes verbose diagnostics to liquidglass.log. Leave off unless you are troubleshooting.";
+"prefs.misc.export_logs.title" = "Export Logs";
+"prefs.export_logs.none" = "No saved logs were found.";
+"prefs.control.bezel_width" = "Bezel Width";
+"prefs.subtitle.bezel_width" = "Width of the refracting edge around the clock glyphs, in points.";
+"prefs.section.lockscreen_date_label.title" = "Date Label";
+"prefs.section.lockscreen_date_label.subtitle" = "Customize the lockscreen date text.";
+"prefs.control.date_format_enabled" = "Custom Date Format";
+"prefs.subtitle.date_format_enabled" = "Replace the lockscreen date with a custom date format.";
+"prefs.control.date_format" = "Format";
+"prefs.subtitle.date_format" = "Uses Unicode date pattern syntax, for example EEE MMM d.";

@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
+#import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
 
 typedef NS_ENUM(NSInteger, LGDockMode) {
@@ -20,18 +21,28 @@ static BOOL dockInsideCategoryStackBackground(UIView *view) {
 }
 
 static LGDockMode dockModeForMaterial(UIView *material) {
-    // each dock family exposes different host geometry
-    if (!isExactClass(material, @"MTMaterialView") ||
-        dockInsideCategoryStackBackground(material)) return LGDockModeNone;
+    BOOL regular = hasAncestorOfClassName(material, @"SBDockView");
+    BOOL floating = hasAncestorOfClassName(material, @"SBFloatingDockPlatterView");
+    BOOL exact = isExactClass(material, @"MTMaterialView");
+    BOOL stacked = dockInsideCategoryStackBackground(material);
+    if (regular || floating)
+        LGLog(@"[Dock] candidate class=%@ frame=%@ bounds=%@ scale=%.1f regular=%d floating=%d exact=%d stacked=%d",
+              NSStringFromClass(material.class), NSStringFromCGRect(material.frame),
+              NSStringFromCGRect(material.bounds), material.window.screen.scale,
+              regular, floating, exact, stacked);
+    if (!exact || stacked) return LGDockModeNone;
 
     CGSize size = material.bounds.size;
-    if (size.width < 160.0 || size.height < 40.0) return LGDockModeNone;
+    if (size.width < 160.0 || size.height < 40.0) {
+        if (regular || floating)
+            LGLog(@"[Dock] rejected size=%.1fx%.1f", size.width, size.height);
+        return LGDockModeNone;
+    }
 
-    if (hasAncestorOfClassName(material, @"SBFloatingDockPlatterView") &&
-        size.width >= size.height * 2.0) {
+    if (floating && size.width >= size.height * 2.0) {
         return LGDockModeFloating;
     }
-    if (hasAncestorOfClassName(material, @"SBDockView")) {
+    if (regular) {
         return LGDockModeRegular;
     }
     return LGDockModeNone;
@@ -76,15 +87,19 @@ static void dockUpdateHomeButtonBorder(LGLiveBackdropView *glass,
 }
 
 static void configureDockGlass(UIView *material, LGLiveBackdropView *glass) {
-    // home button docks use a border instead of specular
+
     LGDockMode mode = dockModeForMaterial(material);
     BOOL homeButtonDock = mode == LGDockModeRegular &&
                           !dockIsFullScreenPhone(material);
     glass.lgSpecularEnabledOverride = homeButtonDock ? @NO : nil;
     dockUpdateHomeButtonBorder(glass, homeButtonDock);
+    LGLog(@"[Dock] injected mode=%ld homeButton=%d material=%@ glass=%@",
+          (long)mode, homeButtonDock, NSStringFromCGRect(material.bounds),
+          NSStringFromCGRect(glass.frame));
 }
 
 %ctor {
+    if (!LGIsSpringBoardProcess()) return;
     LGRegisterMaterialHost(@"Dock", 80, ^BOOL(UIView *material) {
         return dockModeForMaterial(material) != LGDockModeNone;
     }, UIEdgeInsetsZero, ^CGFloat(__unused UIView *material) {

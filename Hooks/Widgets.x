@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
+#import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
 
 static const CGFloat kWidgetCornerRadius = 20.2;
@@ -51,7 +52,7 @@ static UIView *widgetFindDescendantNamed(UIView *view, NSString *name) {
 }
 
 static BOOL isWidgetGlassHostContainer(UIView *view) {
-    // widget internals vary so use the nearest stable container
+
     if (!isExactClass(view, @"UIView")) return NO;
     if (view.bounds.size.width < 120.0 || view.bounds.size.height < 120.0) return NO;
     if (!widgetNearestStackController(view)) return NO;
@@ -74,7 +75,7 @@ static UIView *widgetAncestorContainerHost(UIView *view) {
 }
 
 static BOOL isWidgetStackBackgroundMaterial(UIView *mat) {
-    // stack backgrounds stay stock so child widgets keep separate lenses
+
     if (!isExactClass(mat, @"MTMaterialView")) return NO;
     UIView *parent = mat.superview;
     if (!isExactClass(parent, @"UIView")) return NO;
@@ -114,7 +115,7 @@ static void injectWidgetGlass(UIView *container) {
     lgTrackGlass(glass, @"Widgets", nil);
 }
 
-#pragma mark - hooks
+%group LGWidgetsHooks
 
 %hook MTMaterialView
 - (void)didMoveToWindow {
@@ -184,3 +185,10 @@ static void injectWidgetGlass(UIView *container) {
     if (host) injectWidgetGlass(host);
 }
 %end
+
+%end
+
+%ctor {
+    if (!LGIsSpringBoardProcess()) return;
+    %init(LGWidgetsHooks);
+}

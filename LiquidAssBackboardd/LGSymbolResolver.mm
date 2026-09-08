@@ -1,4 +1,3 @@
-
 #import "LGSymbolResolver.h"
 #import <Foundation/Foundation.h>
 #include <dlfcn.h>
@@ -18,7 +17,6 @@
 #endif
 #endif
 
-// these are noops on non pac slices
 void *LGSymMakeCallable(void *codeAddr) {
 #if __has_feature(ptrauth_calls)
     if (!codeAddr) return codeAddr;
@@ -49,29 +47,28 @@ void *LGSymStripData(void *dataAddr) {
 
 #define LG_LOG_PATH "/var/mobile/Library/Accessibility/liquidglass.log"
 static void rlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+extern bool gLGBackboardDebugLogging;
+
 static void rlog(const char *fmt, ...) {
-#if LIQUIDASS_DEBUG
+    if (!gLGBackboardDebugLogging) return;
     FILE *f = fopen(LG_LOG_PATH, "a");
     if (!f) return;
     fputs("[LGSYM] ", f);
     va_list ap; va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
     fputc('\n', f);
     fclose(f);
-#else
-    (void)fmt;
-#endif
 }
 
 static uint8_t  *g_qcTextBase  = nullptr;
 static size_t    g_qcTextSize  = 0;
-// vtable pointers can live outside text so keep the full mapped span
+
 static uint8_t  *g_qcImageLo   = nullptr;
 static uint8_t  *g_qcImageHi   = nullptr;
 static intptr_t  g_qcSlide     = 0;
 static bool      g_inited      = false;
 
 bool LGSymResolverInit(void) {
-    // every scanner depends on the quartzcore slide and mapped ranges
+
     if (g_inited) return true;
 
     uint32_t n = _dyld_image_count();
@@ -134,7 +131,7 @@ static uint8_t *rawScan(const uint8_t *needle, size_t needleLen,
 }
 
 void *LGSymScanText(const uint8_t *pattern, const char *mask, size_t patternLen) {
-    // x bytes match exactly and every other mask byte is a wildcard
+
     if (!g_inited) return nullptr;
     uint8_t *end = g_qcTextBase + g_qcTextSize - patternLen;
     for (uint8_t *p = g_qcTextBase; p <= end; p++) {
@@ -238,7 +235,7 @@ static inline bool isCBNZW0(uint32_t instr) {
 }
 
 void *LGResolve_CAInternAtomWithCString(void) {
-    // exported builds use dlsym and stripped builds use the wrapper prologue
+
     void *sym = LGSymResolveExported("CAInternAtomWithCString");
     if (sym) return sym;
 
@@ -283,7 +280,7 @@ static bool g_gaussianSiteScanned = false;
 
 static void *matchAddFilterCallAt(uint32_t *p, uint32_t *limit, void **outCtx,
                                   uint32_t *outAtom) {
-    // each registration site loads its context and atom before add filter
+
     if (!isMOVZ_w0(*p)) return nullptr;
     if (!isADRP(p[-2]) || !isADD_imm(p[-1])) return nullptr;
 
@@ -306,7 +303,7 @@ static void *matchAddFilterCallAt(uint32_t *p, uint32_t *limit, void **outCtx,
 }
 
 static void scanGaussianSite(void) {
-    // atom values move between builds so find the registration cluster
+
     if (g_gaussianSiteScanned) return;
     g_gaussianSiteScanned = true;
     if (!g_inited) return;
@@ -314,7 +311,6 @@ static void scanGaussianSite(void) {
     uint32_t *base  = (uint32_t *)g_qcTextBase;
     uint32_t *limit = (uint32_t *)(g_qcTextBase + g_qcTextSize) - 8;
 
-    // constructor time cannot safely intern atoms so gaussian stays positional
     uint32_t gaussAtom = 0;
     rlog("scanGaussianSite: using built-in cluster position (constructor-safe)");
 
@@ -413,7 +409,7 @@ void **LGResolve_FilterTableSlot(void) {
 }
 
 void *LGResolve_StopEncoders(void) {
-    // the assertion string anchors the private metal context method
+
     if (!g_inited) return nullptr;
 
     uint8_t *strLoc = findCString("!memoryless_in_use ()");
@@ -453,7 +449,7 @@ void *LGResolve_StopEncoders(void) {
 }
 
 ptrdiff_t LGResolve_MetalCmdBufOffset(void) {
-    // track this through register moves instead of hardcoding an ios offset
+
     if (!g_inited) return -1;
 
     uint8_t *strLoc = findCString("Command buffer allocation failed!\n");
@@ -513,7 +509,7 @@ ptrdiff_t LGResolve_MetalCmdBufOffset(void) {
 }
 
 int LGResolve_RenderVtableSlot(void * const *vtable, int maxSlots) {
-    // quartzcore uses plain and pac forwarders to reach the render slot
+
     if (!vtable) return -1;
 
     for (int i = 0; i + 1 < maxSlots; i++) {
@@ -568,7 +564,7 @@ int LGResolve_RenderVtableSlot(void * const *vtable, int maxSlots) {
 }
 
 int LGResolve_EdgeInfoVtableSlot(void * const *vtable, int maxSlots) {
-    // identify edge info by its argument saves and two output writes
+
     if (!vtable) return -1;
 
     for (int i = 0; i < maxSlots; i++) {

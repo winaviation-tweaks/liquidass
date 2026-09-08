@@ -3,28 +3,22 @@
 
 @class LGLiveBackdropView;
 
-#pragma mark - class / ancestry helpers
-
 BOOL hasAncestorOfClassName(UIView *v, NSString *clsName);
 BOOL ancestorNameContains(UIView *v, NSString *sub);
 
 BOOL isExactClass(UIView *v, NSString *name);
 
-#pragma mark - per-host enable
-
 BOOL lgHostEnabled(NSString *prefix);
 
-void lgObservePreferenceReload(void (^handler)(void));
+BOOL LGProcessMatchesExclusionList(NSString *list);
 
-#pragma mark - injection registry (live disable -> restore)
+void lgObservePreferenceReload(void (^handler)(void));
 
 extern void *kGlassKey;
 
 void lgTrackGlass(UIView *glass, NSString *prefix, UIView *material);
 
 void lgSuppressStock(UIView *v, NSString *prefix, BOOL setHidden);
-
-#pragma mark - registered material lifecycle
 
 LGLiveBackdropView *LGCreateRegisteredGlass(CGRect frame,
                                              NSString *groupName,
@@ -36,8 +30,6 @@ LGLiveBackdropView *LGInstallRegisteredGlassInMaterial(UIView *material,
                                                         UIEdgeInsets outset,
                                                         CGFloat cornerRadius,
                                                         NSString *groupName);
-
-#pragma mark - material host router
 
 typedef BOOL (^LGMaterialHostMatcher)(UIView *material);
 typedef CGFloat (^LGMaterialHostCornerRadiusProvider)(UIView *material);

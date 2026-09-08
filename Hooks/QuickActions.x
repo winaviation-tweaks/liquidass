@@ -2,6 +2,7 @@
 #import <QuartzCore/QuartzCore.h>
 #import "../Shared/LGLiveBackdropView.h"
 #import "../Shared/LGGlassKit.h"
+#import "../Shared/LGSharedSupport.h"
 #import <objc/runtime.h>
 
 static void *kQAGlassKey = &kQAGlassKey;
@@ -104,6 +105,8 @@ static void LGReconcileQuickActionHosts(void) {
     }
 }
 
+%group LGQuickActionsHooks
+
 %hook UIVisualEffectView
 - (void)didMoveToWindow {
     %orig;
@@ -118,6 +121,10 @@ static void LGReconcileQuickActionHosts(void) {
 }
 %end
 
+%end
+
 %ctor {
+    if (!LGIsSpringBoardProcess()) return;
+    %init(LGQuickActionsHooks);
     lgObservePreferenceReload(^{ LGReconcileQuickActionHosts(); });
 }

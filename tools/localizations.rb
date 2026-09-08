@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-# frozen_string_literal: true
 
 require "fileutils"
 require "set"
@@ -168,7 +167,7 @@ def sync
 
     contents = File.read(path, encoding: "UTF-8").rstrip
     additions = missing.map { |entry| %Q{"#{entry.key}" = "#{entry.value}";} }.join("\n")
-    contents = "#{contents}\n\n/* TODO: Translate synced English fallback strings. */\n#{additions}\n"
+    contents = "#{contents}\n\n#{additions}\n" # TODO: Translate synced English fallback strings
     temporary = "#{path}.tmp.#{$$}"
     File.write(temporary, contents, mode: "w", encoding: "UTF-8")
     File.rename(temporary, path)
