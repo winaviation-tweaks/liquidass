@@ -708,6 +708,19 @@ static void LGSegmentSetGestureClipping(LGSegmentMotionState *state,
                                         UISegmentedControl *control,
                                         BOOL clipping);
 
+static BOOL LGIsRTLControl(UIView *view) {
+    if (@available(iOS 9.0, *)) {
+        if (view && view.effectiveUserInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft) {
+            return YES;
+        }
+        if ([UIView userInterfaceLayoutDirectionForSemanticContentAttribute:
+                view ? view.semanticContentAttribute : UISemanticContentAttributeUnspecified] == UIUserInterfaceLayoutDirectionRightToLeft) {
+            return YES;
+        }
+    }
+    return [UIApplication sharedApplication].userInterfaceLayoutDirection == UIUserInterfaceLayoutDirectionRightToLeft;
+}
+
 static const CGFloat kLGSegmentShapeScale = 0.70;
 static NSArray<UIView *> *LGSegmentViews(UISegmentedControl *control) {
     NSMutableArray<UIView *> *segments = [NSMutableArray array];
@@ -715,9 +728,14 @@ static NSArray<UIView *> *LGSegmentViews(UISegmentedControl *control) {
         if ([NSStringFromClass(subview.class) isEqualToString:@"UISegment"])
             [segments addObject:subview];
     }
+    const BOOL isRTL = LGIsRTLControl(control);
     [segments sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
         CGFloat ax = CGRectGetMinX(a.frame), bx = CGRectGetMinX(b.frame);
-        return ax < bx ? NSOrderedAscending : (ax > bx ? NSOrderedDescending : NSOrderedSame);
+        if (isRTL) {
+            return ax > bx ? NSOrderedAscending : (ax < bx ? NSOrderedDescending : NSOrderedSame);
+        } else {
+            return ax < bx ? NSOrderedAscending : (ax > bx ? NSOrderedDescending : NSOrderedSame);
+        }
     }];
     return segments;
 }
@@ -1069,8 +1087,10 @@ static void LGSegmentContinueTracking(UISegmentedControl *control, CGPoint point
     state.lastTouchX = point.x;
     state.lastTouchTime = now;
 
-    CGFloat minimum = CGRectGetMidX(segments.firstObject.frame);
-    CGFloat maximum = CGRectGetMidX(segments.lastObject.frame);
+    CGFloat x1 = CGRectGetMidX(segments.firstObject.frame);
+    CGFloat x2 = CGRectGetMidX(segments.lastObject.frame);
+    CGFloat minimum = MIN(x1, x2);
+    CGFloat maximum = MAX(x1, x2);
     CGFloat width = CGRectGetWidth(segments.firstObject.frame);
 
     CGFloat allowance = kLGSegmentOverhang;
