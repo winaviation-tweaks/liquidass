@@ -1251,7 +1251,8 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
                 maskLayer.path = normalizedPath;
                 profilePrepareEnd = CACurrentMediaTime();
                 CFTimeInterval profilePublishStart = profilePrepareEnd;
-                BOOL published = LGClockPublishPath(normalizedPath, glass.bounds.size, 1.0);
+                CGFloat maskScale = glass.window.screen.scale ?: 1.0;
+                BOOL published = LGClockPublishPath(normalizedPath, glass.bounds.size, maskScale);
                 profilePublishEnd = CACurrentMediaTime();
                 profilePublishDuration = profilePublishEnd - profilePublishStart;
                 if (!published)
