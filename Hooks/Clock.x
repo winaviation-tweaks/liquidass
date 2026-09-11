@@ -453,11 +453,12 @@ static NSString *LGClockLabelSummary(UIView *host) {
 static UIView *LGClockFindRenderContainer(UIView *host) {
     if (LGClockIsLegacyHost(host)) return host.superview ?: host;
 
+    // Prefer CSProminentDisplayView so the glass doesn't get promoted above the wallpaper depth effect's subject layer.
     UIView *fallback = host;
     for (UIView *view = host.superview; view; view = view.superview) {
         NSString *className = NSStringFromClass(view.class);
-        if ([className isEqualToString:@"CSCoverSheetView"]) return view;
-        if ([className isEqualToString:@"CSProminentDisplayView"]) fallback = view;
+        if ([className isEqualToString:@"CSProminentDisplayView"]) return view;
+        if ([className isEqualToString:@"CSCoverSheetView"]) fallback = view;
     }
     return fallback;
 }
