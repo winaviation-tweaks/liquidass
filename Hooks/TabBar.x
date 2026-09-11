@@ -44,6 +44,15 @@ static const CGFloat kLGTabBarLandscapeHighlightHeight = 46.0;
 static const CGFloat kLGTabBarPortraitLensWidth = 94.0;
 static const CGFloat kLGTabBarPortraitLensHeight = 72.0;
 static const CGFloat kLGTabBarLandscapeHeight = 52.0;
+static const CGFloat kLGStretchMax          = 1.55;
+static const CGFloat kLGStretchVelocityRef  = 620.0;
+static const CGFloat kLGStretchResponse     = 0.10;
+static const CGFloat kLGStretchDamping      = 0.72;
+static const CGFloat kLGStretchSquish       = 0.35;
+static const CGFloat kLagMaxOffset          = 14.0;
+static const CGFloat kLagVelocityRef        = 900.0;
+static const CGFloat kLagResponse           = 0.14;
+static const CGFloat kLagDamping            = 0.85;
 
 static const void *kLGTabBarVibranceKey = &kLGTabBarVibranceKey;
 
@@ -148,6 +157,13 @@ static const void *kLGTabBarVibranceKey = &kLGTabBarVibranceKey;
 @property (nonatomic, assign) CFTimeInterval lastTouchTime;
 @property (nonatomic, assign) CFTimeInterval lastDisplayTime;
 @property (nonatomic, copy) void (^onArrival)(void);
+@property (nonatomic, assign) CGFloat stretchAmount;
+@property (nonatomic, assign) CGFloat stretchVelocity;
+@property (nonatomic, assign) CGFloat lagOffset;
+@property (nonatomic, assign) CGFloat lagVelocity;
+@property (nonatomic, assign) CGFloat lastRenderedX;
+@property (nonatomic, assign) CGFloat decelBlend;
+@property (nonatomic, assign) CGFloat velocitySmoothed;
 - (void)start;
 - (void)stop;
 @end
@@ -294,6 +310,43 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
         ? link.timestamp - self.lastDisplayTime : 1.0 / 60.0;
     if (dt > 1.0 / 30.0) dt = 1.0 / 30.0;
     self.lastDisplayTime = link.timestamp;
+
+    // ── velocity from rendered position ──
+    CGFloat frameVelocity = (self.renderedCenterX - self.lastRenderedX) / dt;
+    self.lastRenderedX = self.renderedCenterX;
+    CGFloat velAlpha = 1.0 - exp(-dt / 0.06);
+    self.velocitySmoothed += (frameVelocity - self.velocitySmoothed) * velAlpha;
+    CGFloat speed = fabs(self.velocitySmoothed);
+
+    // ── deceleration blend ──
+    CGFloat directionToTarget = self.targetCenterX - self.renderedCenterX;
+    CGFloat movingToward = (self.velocitySmoothed * directionToTarget) > 0;
+    CGFloat targetDecel = movingToward ? 1.0 : 0.0;
+    CGFloat decelAlpha = 1.0 - exp(-dt / 0.08);
+    self.decelBlend += (targetDecel - self.decelBlend) * decelAlpha;
+
+    // ── stretch spring ──
+    CGFloat rawStretch = 1.0 + (kLGStretchMax - 1.0)
+        * (1.0 - exp(-speed / kLGStretchVelocityRef));
+    CGFloat effectiveStretchTarget = self.decelBlend > 0.5
+        ? rawStretch * (1.0 - 0.3 * self.decelBlend)
+        : rawStretch;
+    self.stretchAmount = LGTabBarSpringStep(
+        self.stretchAmount, effectiveStretchTarget,
+        &self.stretchVelocity,
+        kLGStretchResponse, kLGStretchDamping, dt);
+    self.stretchAmount = fmax(0.85, fmin(self.stretchAmount, kLGStretchMax + 0.1));
+
+    // ── lag spring (center trails behind finger) ──
+    CGFloat rawLag = -kLagMaxOffset
+        * (1.0 - exp(-speed / kLagVelocityRef))
+        * (self.velocitySmoothed > 0 ? 1.0 : -1.0);
+    self.lagOffset = LGTabBarSpringStep(
+        self.lagOffset, rawLag,
+        &self.lagVelocity,
+        kLagResponse, kLagDamping, dt);
+
+    // ── base liquid step ──
     LGLiquidRenderedState current =
         LGLiquidRenderedStateMake(self.renderedCenterX,
                                   CGSizeMake(self.renderedWidth,
@@ -304,14 +357,31 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
                                              self.targetHeight));
     LGLiquidRenderedState next =
         LGLiquidRenderedStateStep(current, target, self.active, dt);
-    CGFloat response = self.active ? 0.155 : 0.135;
-    next.width = LGTabBarSpringStep(current.width, target.width,
-                                    &_widthVelocity, response, 1.0, dt);
-    next.height = LGTabBarSpringStep(current.height, target.height,
-                                     &_heightVelocity, response, 1.0, dt);
+
+    // apply lag to center
+    next.centerX += self.lagOffset;
+
+    // ── stretched / squished dimensions ──
+    CGFloat squishFactor = 1.0 - kLGStretchSquish * (self.stretchAmount - 1.0);
+    CGFloat stretchedWidth  = next.width  * self.stretchAmount;
+    CGFloat stretchedHeight = next.height * fmax(0.7, squishFactor);
+
+    CGFloat widthResponse  = self.decelBlend > 0.5 ? 0.11 : 0.155;
+    CGFloat heightResponse = self.decelBlend > 0.5 ? 0.11 : 0.135;
+    CGFloat widthDamping   = self.decelBlend > 0.5 ? 0.78 : 1.0;
+    CGFloat heightDamping  = self.decelBlend > 0.5 ? 0.78 : 1.0;
+
+    next.width  = LGTabBarSpringStep(current.width,  stretchedWidth,
+                                     &self.widthVelocity,
+                                     widthResponse, widthDamping, dt);
+    next.height = LGTabBarSpringStep(current.height, stretchedHeight,
+                                     &self.heightVelocity,
+                                     heightResponse, heightDamping, dt);
+
     self.renderedCenterX = next.centerX;
-    self.renderedWidth = next.width;
-    self.renderedHeight = next.height;
+    self.renderedWidth   = next.width;
+    self.renderedHeight  = next.height;
+
     CGFloat pillMidY = CGRectGetMidY(LGTabBarPillFrame(bar));
     LGSetTabBarLensPill(bar, lens,
         CGRectMake(next.centerX - next.width * 0.5,
@@ -319,11 +389,12 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
                    next.width, next.height));
     LGPositionTabBarBlueOverlay(bar, lens);
 
+    // ── arrival at tap destination ──
     if (self.awaitingTapDestination) {
         BOOL arrived =
-            fabs(next.centerX - self.targetCenterX) < 1.0 &&
-            fabs(next.width - LGTabBarLensWidth(bar)) < 1.0 &&
-            fabs(next.height - LGTabBarLensHeight(bar)) < 1.0;
+            fabs(next.centerX - (self.targetCenterX + self.lagOffset)) < 1.0 &&
+            fabs(next.width  - LGTabBarLensWidth(bar)  * self.stretchAmount) < 2.0 &&
+            fabs(next.height - LGTabBarLensHeight(bar) * 0.9) < 2.0;
         BOOL timedOut =
             CACurrentMediaTime() - self.destinationStartTime > 0.75;
         if (arrived || timedOut) {
@@ -334,7 +405,7 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
                 self.onArrival = nil;
                 callback();
             }
-            self.targetWidth = self.restingTargetWidth;
+            self.targetWidth  = self.restingTargetWidth;
             self.targetHeight = LGTabBarHighlightHeight(bar);
             self.awaitingRestingShape = YES;
             self.collapseStartDistance =
@@ -343,6 +414,8 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
             self.destinationStartTime = CACurrentMediaTime();
         }
     }
+
+    // ── highlight tracking ──
     UIView *highlight =
         objc_getAssociatedObject(bar, kLGTabBarSelectedHighlightKey);
     if (highlight) {
@@ -351,6 +424,8 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
         highlight.layer.cornerRadius = next.height * 0.5;
         highlight.hidden = NO;
     }
+
+    // ── resting shape collapse ──
     if (self.awaitingRestingShape) {
         CGFloat remaining =
             hypot(next.width - self.targetWidth,
@@ -364,17 +439,177 @@ static inline CGFloat LGTabBarSpringStep(CGFloat current,
         UIView *blueOverlay = LGTabBarBlueOverlay(bar, NO);
         blueOverlay.alpha = 1.0 - handoff;
         BOOL settled =
-            fabs(next.centerX - self.targetCenterX) < 0.75 &&
-            fabs(next.width - self.targetWidth) < 0.75 &&
+            fabs(next.centerX - (self.targetCenterX + self.lagOffset)) < 0.75 &&
+            fabs(next.width  - self.targetWidth)  < 0.75 &&
             fabs(next.height - self.targetHeight) < 0.75;
         BOOL timedOut =
             CACurrentMediaTime() - self.destinationStartTime > 0.50;
         if (settled || timedOut) {
             self.awaitingRestingShape = NO;
+            self.stretchAmount   = 1.0;
+            self.stretchVelocity = 0.0;
+            self.lagOffset      = 0.0;
+            self.lagVelocity    = 0.0;
             LGFinalizeTabBarSelection(bar, lens, self);
         }
     }
 }
+- (void)tick:(CADisplayLink *)link {
+    LGLiveBackdropView *lens = self.lens;
+    UITabBar *bar = self.bar;
+    if (!lens || !bar || lens.hidden) {
+        [self stop];
+        return;
+    }
+    CFTimeInterval dt = self.lastDisplayTime > 0.0
+        ? link.timestamp - self.lastDisplayTime : 1.0 / 60.0;
+    if (dt > 1.0 / 30.0) dt = 1.0 / 30.0;
+    self.lastDisplayTime = link.timestamp;
+
+    // ── velocity from rendered position ──
+    CGFloat frameVelocity = (self.renderedCenterX - self.lastRenderedX) / dt;
+    self.lastRenderedX = self.renderedCenterX;
+    CGFloat velAlpha = 1.0 - exp(-dt / 0.06);
+    self.velocitySmoothed += (frameVelocity - self.velocitySmoothed) * velAlpha;
+    CGFloat speed = fabs(self.velocitySmoothed);
+
+    // ── deceleration blend ──
+    CGFloat directionToTarget = self.targetCenterX - self.renderedCenterX;
+    CGFloat movingToward = (self.velocitySmoothed * directionToTarget) > 0;
+    CGFloat targetDecel = movingToward ? 1.0 : 0.0;
+    CGFloat decelAlpha = 1.0 - exp(-dt / 0.08);
+    self.decelBlend += (targetDecel - self.decelBlend) * decelAlpha;
+
+    // ── stretch spring ──
+    CGFloat rawStretch = 1.0 + (kLGStretchMax - 1.0)
+        * (1.0 - exp(-speed / kLGStretchVelocityRef));
+    CGFloat effectiveStretchTarget = self.decelBlend > 0.5
+        ? rawStretch * (1.0 - 0.3 * self.decelBlend)
+        : rawStretch;
+    self.stretchAmount = LGTabBarSpringStep(
+        self.stretchAmount, effectiveStretchTarget,
+        &self.stretchVelocity,
+        kLGStretchResponse, kLGStretchDamping, dt);
+    self.stretchAmount = fmax(0.85, fmin(self.stretchAmount, kLGStretchMax + 0.1));
+
+    // ── lag spring (center trails behind finger) ──
+    CGFloat rawLag = -kLagMaxOffset
+        * (1.0 - exp(-speed / kLagVelocityRef))
+        * (self.velocitySmoothed > 0 ? 1.0 : -1.0);
+    self.lagOffset = LGTabBarSpringStep(
+        self.lagOffset, rawLag,
+        &self.lagVelocity,
+        kLagResponse, kLagDamping, dt);
+
+    // ── base liquid step ──
+    LGLiquidRenderedState current =
+        LGLiquidRenderedStateMake(self.renderedCenterX,
+                                  CGSizeMake(self.renderedWidth,
+                                             self.renderedHeight));
+    LGLiquidRenderedState target =
+        LGLiquidRenderedStateMake(self.targetCenterX,
+                                  CGSizeMake(self.targetWidth,
+                                             self.targetHeight));
+    LGLiquidRenderedState next =
+        LGLiquidRenderedStateStep(current, target, self.active, dt);
+
+    // apply lag to center
+    next.centerX += self.lagOffset;
+
+    // ── stretched / squished dimensions ──
+    CGFloat squishFactor = 1.0 - kLGStretchSquish * (self.stretchAmount - 1.0);
+    CGFloat stretchedWidth  = next.width  * self.stretchAmount;
+    CGFloat stretchedHeight = next.height * fmax(0.7, squishFactor);
+
+    CGFloat widthResponse  = self.decelBlend > 0.5 ? 0.11 : 0.155;
+    CGFloat heightResponse = self.decelBlend > 0.5 ? 0.11 : 0.135;
+    CGFloat widthDamping   = self.decelBlend > 0.5 ? 0.78 : 1.0;
+    CGFloat heightDamping  = self.decelBlend > 0.5 ? 0.78 : 1.0;
+
+    next.width  = LGTabBarSpringStep(current.width,  stretchedWidth,
+                                     &self.widthVelocity,
+                                     widthResponse, widthDamping, dt);
+    next.height = LGTabBarSpringStep(current.height, stretchedHeight,
+                                     &self.heightVelocity,
+                                     heightResponse, heightDamping, dt);
+
+    self.renderedCenterX = next.centerX;
+    self.renderedWidth   = next.width;
+    self.renderedHeight  = next.height;
+
+    CGFloat pillMidY = CGRectGetMidY(LGTabBarPillFrame(bar));
+    LGSetTabBarLensPill(bar, lens,
+        CGRectMake(next.centerX - next.width * 0.5,
+                   pillMidY - next.height * 0.5,
+                   next.width, next.height));
+    LGPositionTabBarBlueOverlay(bar, lens);
+
+    // ── arrival at tap destination ──
+    if (self.awaitingTapDestination) {
+        BOOL arrived =
+            fabs(next.centerX - (self.targetCenterX + self.lagOffset)) < 1.0 &&
+            fabs(next.width  - LGTabBarLensWidth(bar)  * self.stretchAmount) < 2.0 &&
+            fabs(next.height - LGTabBarLensHeight(bar) * 0.9) < 2.0;
+        BOOL timedOut =
+            CACurrentMediaTime() - self.destinationStartTime > 0.75;
+        if (arrived || timedOut) {
+            self.awaitingTapDestination = NO;
+            self.active = NO;
+            if (self.onArrival) {
+                void (^callback)(void) = self.onArrival;
+                self.onArrival = nil;
+                callback();
+            }
+            self.targetWidth  = self.restingTargetWidth;
+            self.targetHeight = LGTabBarHighlightHeight(bar);
+            self.awaitingRestingShape = YES;
+            self.collapseStartDistance =
+                hypot(next.width - self.targetWidth,
+                      next.height - self.targetHeight);
+            self.destinationStartTime = CACurrentMediaTime();
+        }
+    }
+
+    // ── highlight tracking ──
+    UIView *highlight =
+        objc_getAssociatedObject(bar, kLGTabBarSelectedHighlightKey);
+    if (highlight) {
+        highlight.bounds = CGRectMake(0.0, 0.0, next.width, next.height);
+        highlight.center = LGTabBarLensPillCenter(lens);
+        highlight.layer.cornerRadius = next.height * 0.5;
+        highlight.hidden = NO;
+    }
+
+    // ── resting shape collapse ──
+    if (self.awaitingRestingShape) {
+        CGFloat remaining =
+            hypot(next.width - self.targetWidth,
+                  next.height - self.targetHeight);
+        CGFloat progress = self.collapseStartDistance > 0.001
+            ? 1.0 - remaining / self.collapseStartDistance : 1.0;
+        progress = fmin(fmax(progress, 0.0), 1.0);
+        CGFloat handoff = progress * progress * (3.0 - 2.0 * progress);
+        highlight.alpha = handoff;
+        lens.alpha = 1.0 - handoff;
+        UIView *blueOverlay = LGTabBarBlueOverlay(bar, NO);
+        blueOverlay.alpha = 1.0 - handoff;
+        BOOL settled =
+            fabs(next.centerX - (self.targetCenterX + self.lagOffset)) < 0.75 &&
+            fabs(next.width  - self.targetWidth)  < 0.75 &&
+            fabs(next.height - self.targetHeight) < 0.75;
+        BOOL timedOut =
+            CACurrentMediaTime() - self.destinationStartTime > 0.50;
+        if (settled || timedOut) {
+            self.awaitingRestingShape = NO;
+            self.stretchAmount   = 1.0;
+            self.stretchVelocity = 0.0;
+            self.lagOffset      = 0.0;
+            self.lagVelocity    = 0.0;
+            LGFinalizeTabBarSelection(bar, lens, self);
+        }
+    }
+}
+
 
 @end
 
@@ -1339,6 +1574,13 @@ static void LGBeginTabBarLiquidMotion(UITabBar *bar,
     state.lastTouchX = state.gestureStartX;
     state.dragged = NO;
     state.lastTouchTime = CACurrentMediaTime();
+    state.stretchAmount    = 1.0;
+    state.stretchVelocity  = 0.0;
+    state.lagOffset        = 0.0;
+    state.lagVelocity      = 0.0;
+    state.lastRenderedX    = restingCenterX;
+    state.decelBlend       = 0.0;
+    state.velocitySmoothed = 0.0;
     CGFloat restingHeight = LGTabBarHighlightHeight(bar);
     LGSetTabBarLensPill(bar, lens,
         CGRectMake(restingCenterX - restingWidth * 0.5,
