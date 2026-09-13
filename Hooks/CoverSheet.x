@@ -57,6 +57,7 @@ static UIDeviceOrientation sLGCoverSheetLastLandscapeOrientation =
     UIDeviceOrientationLandscapeLeft;
 static UIDeviceOrientation sLGCoverSheetLastPortraitOrientation =
     UIDeviceOrientationPortrait;
+static CGFloat sLGCoverSheetCurrentProgress = 0.0;
 
 typedef struct {
     NSUInteger ticks;
@@ -848,6 +849,8 @@ static void LGCoverSheetSyncGlassGeometry(UIView *panel,
     LGCoverSheetUpdateBottomCornerMask(glass);
 
     if (LGCoverSheetModeUsesGlass(sLGCoverSheetMode)) {
+        glass.refraction = LG_prefFloat(@"CoverSheet.RefractionScale", 0.0) *
+                           (1.0 - sLGCoverSheetCurrentProgress);
 
         CGPoint captureOrigin = glass.frame.origin;
         if (glass.window) {
@@ -1096,6 +1099,9 @@ static void LGCoverSheetSetMode(LGCoverSheetMode mode) {
     sLGCoverSheetPerformingFade =
         fadeToLockscreen || sLGCoverSheetFadeToHome;
     sLGCoverSheetCommitEndPresented = NO;
+    if (mode == LGCoverSheetModeIdle) {
+        sLGCoverSheetCurrentProgress = 0.0;
+    }
     if (!LGCoverSheetModeUsesGlass(mode)) {
         LGCoverSheetWriteSharedState(false, 0.0f, 0.0f, 0.0f, 0u);
     }
@@ -1221,6 +1227,7 @@ static void LGCoverSheetHandleAnimationTick(id self, id controller, double progr
                                             BOOL gestureActive,
                                             BOOL forPresentationValue,
                                             void (^callOrig)(void)) {
+    sLGCoverSheetCurrentProgress = (CGFloat)progress;
     BOOL terminalModelTick =
         sLGCoverSheetLockedHandoffActive &&
         !forPresentationValue && !gestureActive && progress >= 0.999;
