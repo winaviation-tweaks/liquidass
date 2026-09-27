@@ -283,6 +283,18 @@ static void LG_closeSafeModeAlert(void) {
 }
 
 static void LG_showSafeModeAlertIfNeeded(void) {
+    // BUGFIX: if the previous alert's window was torn down by the system
+    // (e.g. SpringBoard replaced the coversheet window) instead of the user
+    // tapping a button, sLGSafeModeAlertWindow was left stale forever and
+    // the alert could never be shown again. Clear it here if it's no longer
+    // on screen so a fresh alert can be presented.
+    if (sLGSafeModeAlertWindow && (sLGSafeModeAlertWindow.hidden ||
+                                    sLGSafeModeAlertWindow.alpha <= 0.0 ||
+                                    !sLGSafeModeAlertWindow.rootViewController.view.window)) {
+        LG_safeModeAlertLog(@"clearing stale alert window=%@", sLGSafeModeAlertWindow);
+        sLGSafeModeAlertWindow = nil;
+    }
+
     BOOL pending = access(kLGSafeModePendingPath, F_OK) == 0;
     BOOL safeMode = LGBackboardSafeModeActive();
     LG_safeModeAlertLog(@"show requested pending=%d safeMode=%d existing=%@",
