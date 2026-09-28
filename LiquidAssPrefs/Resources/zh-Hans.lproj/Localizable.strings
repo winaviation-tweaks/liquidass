@@ -130,6 +130,8 @@
 "prefs.surface.volume_hud.subtitle" = "侧边栏弹性音量滑块。";
 "prefs.surface.pill_hud.title" = "胶囊提示";
 "prefs.surface.pill_hud.subtitle" = "静音、铃声和专注模式的提示胶囊。";
+"prefs.surface.island.title" = "灵动岛";
+"prefs.surface.island.subtitle" = "灵动岛背后的实时液态玻璃。";
 "prefs.misc.respring.title" = "注销";
 "prefs.misc.respring.subtitle" = "注销";
 "prefs.misc.exit_safe_mode.title" = "退出安全模式";

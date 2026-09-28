@@ -29,6 +29,7 @@ FOUNDATION_EXPORT NSString * const LGPrefsSurfaceTabBar;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfaceAssistiveTouch;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfaceVolumeHUD;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfacePillHUD;
+FOUNDATION_EXPORT NSString * const LGPrefsSurfaceIsland;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfaceGlobalControls;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfaceMoreOptions;
 FOUNDATION_EXPORT NSString * const LGPrefsSurfaceSettings;

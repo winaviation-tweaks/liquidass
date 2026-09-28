@@ -29,6 +29,7 @@ NSString * const LGPrefsSurfaceTabBar = @"TabBar";
 NSString * const LGPrefsSurfaceAssistiveTouch = @"AssistiveTouch";
 NSString * const LGPrefsSurfaceVolumeHUD = @"VolumeHUD";
 NSString * const LGPrefsSurfacePillHUD = @"PillHUD";
+NSString * const LGPrefsSurfaceIsland = @"Island";
 NSString * const LGPrefsSurfaceGlobalControls = @"GlobalControls";
 NSString * const LGPrefsSurfaceMoreOptions = @"MoreOptions";
 NSString * const LGPrefsSurfaceSettings = @"PrefsSettings";
@@ -61,6 +62,7 @@ BOOL LGPrefsSurfaceIsKnown(NSString *identifier) {
            [identifier isEqualToString:LGPrefsSurfaceAssistiveTouch] ||
            [identifier isEqualToString:LGPrefsSurfaceVolumeHUD] ||
            [identifier isEqualToString:LGPrefsSurfacePillHUD] ||
+           [identifier isEqualToString:LGPrefsSurfaceIsland] ||
            [identifier isEqualToString:LGPrefsSurfaceGlobalControls] ||
            [identifier isEqualToString:LGPrefsSurfaceMoreOptions] ||
            [identifier isEqualToString:LGPrefsSurfaceSettings];
@@ -94,6 +96,7 @@ NSString *LGPrefsSurfaceTitle(NSString *identifier) {
     if ([identifier isEqualToString:LGPrefsSurfaceAssistiveTouch]) return LGLocalized(@"prefs.surface.assistive_touch.title");
     if ([identifier isEqualToString:LGPrefsSurfaceVolumeHUD]) return LGLocalized(@"prefs.surface.volume_hud.title");
     if ([identifier isEqualToString:LGPrefsSurfacePillHUD]) return LGLocalized(@"prefs.surface.pill_hud.title");
+    if ([identifier isEqualToString:LGPrefsSurfaceIsland]) return LGLocalized(@"prefs.surface.island.title");
     if ([identifier isEqualToString:LGPrefsSurfaceGlobalControls]) return LGLocalized(@"prefs.surface.global_controls.title");
     if ([identifier isEqualToString:LGPrefsSurfaceMoreOptions]) return LGLocalized(@"prefs.misc.about.title");
     if ([identifier isEqualToString:LGPrefsSurfaceSettings]) return LGLocalized(@"prefs.misc.prefs_settings.title");
@@ -109,6 +112,7 @@ NSString *LGPrefsSurfaceSubtitle(NSString *identifier) {
     if ([identifier isEqualToString:LGPrefsSurfaceAssistiveTouch]) return LGLocalized(@"prefs.surface.assistive_touch.subtitle");
     if ([identifier isEqualToString:LGPrefsSurfaceVolumeHUD]) return LGLocalized(@"prefs.surface.volume_hud.subtitle");
     if ([identifier isEqualToString:LGPrefsSurfacePillHUD]) return LGLocalized(@"prefs.surface.pill_hud.subtitle");
+    if ([identifier isEqualToString:LGPrefsSurfaceIsland]) return LGLocalized(@"prefs.surface.island.subtitle");
     if ([identifier isEqualToString:LGPrefsSurfaceMoreOptions]) return LGLocalized(@"prefs.misc.about.subtitle");
     if ([identifier isEqualToString:LGPrefsSurfaceSettings]) return LGLocalized(@"prefs.misc.prefs_settings.subtitle");
     return @"";
@@ -124,6 +128,7 @@ UIColor *LGPrefsSurfaceTintColor(NSString *identifier) {
     if ([identifier isEqualToString:LGPrefsSurfaceAssistiveTouch]) return UIColor.systemPurpleColor;
     if ([identifier isEqualToString:LGPrefsSurfaceVolumeHUD]) return UIColor.systemYellowColor;
     if ([identifier isEqualToString:LGPrefsSurfacePillHUD]) return UIColor.systemRedColor;
+    if ([identifier isEqualToString:LGPrefsSurfaceIsland]) return UIColor.systemPurpleColor;
     if ([identifier isEqualToString:LGPrefsSurfaceGlobalControls]) return UIColor.systemTealColor;
     if ([identifier isEqualToString:LGPrefsSurfaceControlCenter]) return UIColor.systemTealColor;
     return UIColor.systemBlueColor;
@@ -157,6 +162,7 @@ NSString *LGPrefsSurfaceSymbolName(NSString *identifier) {
     if ([identifier isEqualToString:LGPrefsSurfaceAssistiveTouch]) return @"hand.tap.fill";
     if ([identifier isEqualToString:LGPrefsSurfaceVolumeHUD]) return @"speaker.wave.3.fill";
     if ([identifier isEqualToString:LGPrefsSurfacePillHUD]) return @"bell.badge.fill";
+    if ([identifier isEqualToString:LGPrefsSurfaceIsland]) return @"capsule";
     if ([identifier isEqualToString:LGPrefsSurfaceGlobalControls]) return @"slider.horizontal.3";
     if ([identifier isEqualToString:LGPrefsSurfaceMoreOptions]) return @"ellipsis.circle.fill";
     if ([identifier isEqualToString:LGPrefsSurfaceSettings]) return @"info.circle.fill";
@@ -194,6 +200,7 @@ NSArray<NSDictionary *> *LGPrefsSurfaceItems(NSString *identifier) {
         @{ @"type": @"nav", @"title": LGPrefsSurfaceTitle(LGPrefsSurfaceAssistiveTouch), @"surface_identifier": LGPrefsSurfaceAssistiveTouch },
         @{ @"type": @"nav", @"title": LGPrefsSurfaceTitle(LGPrefsSurfaceVolumeHUD), @"surface_identifier": LGPrefsSurfaceVolumeHUD },
         @{ @"type": @"nav", @"title": LGPrefsSurfaceTitle(LGPrefsSurfacePillHUD), @"surface_identifier": LGPrefsSurfacePillHUD },
+        @{ @"type": @"nav", @"title": LGPrefsSurfaceTitle(LGPrefsSurfaceIsland), @"surface_identifier": LGPrefsSurfaceIsland },
     ];
     if ([identifier isEqualToString:LGPrefsSurfaceDock]) return LGDockItems();
     if ([identifier isEqualToString:LGPrefsSurfaceFolderIcons]) return LGRendererItemsForHostPrefix(@"FolderIcon");
@@ -218,6 +225,7 @@ NSArray<NSDictionary *> *LGPrefsSurfaceItems(NSString *identifier) {
     if ([identifier isEqualToString:LGPrefsSurfaceAssistiveTouch]) return LGRendererItemsForHostPrefix(@"AssistiveTouch");
     if ([identifier isEqualToString:LGPrefsSurfaceVolumeHUD]) return LGRendererItemsForHostPrefix(@"VolumeHUD");
     if ([identifier isEqualToString:LGPrefsSurfacePillHUD]) return LGRendererItemsForHostPrefix(@"PillHUD");
+    if ([identifier isEqualToString:LGPrefsSurfaceIsland]) return LGRendererItemsForHostPrefix(@"Island");
     if ([identifier isEqualToString:LGPrefsSurfaceGlobalControls]) return LGGlobalControlsItems();
     if ([identifier isEqualToString:LGPrefsSurfaceHomescreen]) return LGHomescreenItems();
     if ([identifier isEqualToString:LGPrefsSurfaceLockscreen]) return LGLockscreenItems();

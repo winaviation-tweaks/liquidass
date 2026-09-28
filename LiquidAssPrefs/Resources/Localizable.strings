@@ -130,6 +130,8 @@
 "prefs.surface.volume_hud.subtitle" = "Sidebar elastic volume slider";
 "prefs.surface.pill_hud.title" = "Pill HUDs";
 "prefs.surface.pill_hud.subtitle" = "Mute, ringer, and DND alert pills";
+"prefs.surface.island.title" = "Dynamic Island";
+"prefs.surface.island.subtitle" = "Live glass backdrop behind the Dynamic Island";
 "prefs.misc.respring.title" = "Respring";
 "prefs.misc.respring.subtitle" = "Restart SpringBoard";
 "prefs.misc.exit_safe_mode.title" = "Exit Safe Mode";
