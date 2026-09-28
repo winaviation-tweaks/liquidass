@@ -49,7 +49,8 @@ typedef struct {
     X(AppIcons,       "dylv.liquidglass.appicons",     "AppIcons",        28.0f / 220.0f, 13.75f,    108.0f, 2.6f, 1.80f, 1.0f, 1.0f,  1.00f, "#FFFFFF1A", "#00000000") \
     X(AssistiveTouch, "dylv.liquidglass.assistivetouch","AssistiveTouch", 0.50f,          22.80f,    18.00f, 2.75f, 2.10f, 0.5f, 0.35f, 0.00f, "#00000000", "#00000000") \
     X(VolumeHUD,      "dylv.liquidglass.volumehud",    "VolumeHUD",       0.50f,          28.00f,    280.0f, 3.00f, 3.20f, 5.0f, 0.35f, 1.20f, "#B8B8B8CC", "#666666CC") \
-    X(PillHUD,        "dylv.liquidglass.pillhud",      "PillHUD",         0.50f,          17.50f,    120.0f, 2.2f, 1.70f, 1.0f, 0.35f, 1.20f, "#FFFFFF1A", "#0000002E")
+    X(PillHUD,        "dylv.liquidglass.pillhud",      "PillHUD",         0.50f,          17.50f,    120.0f, 2.2f, 1.70f, 1.0f, 0.35f, 1.20f, "#FFFFFF1A", "#0000002E") \
+    X(Island,         "dylv.liquidglass.island",       "Island",          0.50f,          6.500f,    108.0f, 2.2f, 1.70f, 1.0f, 0.35f, 1.20f, "#FFFFFF1A", "#0000002E")
 
 enum LGHostIdentifier {
 #define LG_HOST_ENUM(identifier, ...) LGHostIdentifier##identifier,
