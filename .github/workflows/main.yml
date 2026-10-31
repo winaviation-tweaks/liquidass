@@ -82,6 +82,20 @@ jobs:
           brew install ldid make
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
 
+      - name: install AltList into theos
+        run: |
+          git clone --depth 1 https://github.com/opa334/AltList.git
+          cd AltList
+          # same steps as AltList's install_to_theos.sh; PREFIX= avoids its Linux-only toolchain path
+          make clean
+          make FINALPACKAGE=1 PREFIX=
+          cp -R .theos/obj/AltList.framework "$THEOS/lib"
+          make clean
+          make FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless PREFIX=
+          mkdir -p "$THEOS/lib/iphone/rootless/lib"
+          cp -R .theos/obj/AltList.framework "$THEOS/lib/iphone/rootless"
+          cd ..
+
       - name: build (${{ matrix.scheme }})
         run: |
           SCHEME_FLAG=""
