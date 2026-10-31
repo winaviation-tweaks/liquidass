@@ -13,6 +13,7 @@
 #import "../Shared/LGHostRegistry.h"
 #import "../Shared/LGLensRectState.h"
 #import "../Shared/LGLiveBackdropView.h"
+#import "../Shared/LGSharedSupport.h"
 
 extern BOOL LG_prefBool(NSString *key, BOOL fallback);
 extern CGFloat LG_prefFloat(NSString *key, CGFloat fallback);
@@ -190,7 +191,10 @@ static CGFloat LGClockFontScale(void) {
 
 static NSInteger LGClockFPSLimit(void) {
     NSInteger maximum = UIScreen.mainScreen.maximumFramesPerSecond;
-    return MIN(maximum, MAX(1, (NSInteger)llround(LG_prefFloat(@"Clock.FPS", maximum))));
+    // K.B.: older GPUs default to 30fps for clock tracking unless the user chose a value
+    NSInteger fallback = (LGDeviceIsLowTier() && !LGHasExplicitPreferenceValue(@"Clock.FPS"))
+        ? MIN(maximum, 30) : maximum;
+    return MIN(maximum, MAX(1, (NSInteger)llround(LG_prefFloat(@"Clock.FPS", fallback))));
 }
 
 static const CGFloat kLGClockVerticalOffset = 10.0;
@@ -857,6 +861,9 @@ static NSHashTable<LGClockState *> *LGClockStates(void) {
 }
 
 - (void)trackMotion {
+    // K.B.: no clock glass exists (feature off or lock screen not shown), so there is
+    // nothing to move and no reason to wake the display link on every scroll step
+    if (!LGClockEnabled() || LGClockStates().count == 0) return;
     self.deadline = CACurrentMediaTime() + 0.30;
     self.displayLink.preferredFramesPerSecond = LGClockFPSLimit();
     self.displayLink.paused = NO;

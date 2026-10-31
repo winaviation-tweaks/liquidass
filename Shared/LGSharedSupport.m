@@ -3,6 +3,7 @@
 #import <os/lock.h>
 #import <stdlib.h>
 #import <sys/sysctl.h>
+#import <sys/utsname.h>
 #import <unistd.h>
 
 static const char *kLGBackboardSafeModeStatePath =
@@ -368,6 +369,23 @@ NSString *LG_prefString(NSString *key, NSString *fallback) {
 
 BOOL LG_globalEnabled(void) {
     return LG_prefBool(@"Global.Enabled", NO);
+}
+
+BOOL LGDeviceIsLowTier(void) {
+    static BOOL detectedLowTier;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        struct utsname info;
+        if (uname(&info) != 0) return;
+        int major = 0, minor = 0;
+        // iPhone12,x is the A13 generation; anything lower is A12 or older
+        if (sscanf(info.machine, "iPhone%d,%d", &major, &minor) == 2)
+            detectedLowTier = (major <= 12);
+    });
+    NSInteger mode = LG_prefInteger(@"Performance.Mode", 0);
+    if (mode == 1) return YES;
+    if (mode == 2) return NO;
+    return detectedLowTier;
 }
 
 BOOL LGDebugLoggingEnabled(void) {

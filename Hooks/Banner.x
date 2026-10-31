@@ -71,6 +71,39 @@ static BOOL LGResponderChainContainsClass(UIResponder *responder, NSString *name
 
 static void *kLGPlatterClassificationKey = &kLGPlatterClassificationKey;
 
+// K.B.: these hooks run for every MTMaterialView layout and every UILabel text change
+// in SpringBoard, so the on/off state is cached and refreshed on preference reload
+static NSInteger sLGPlatterHostsActive = -1;
+
+static BOOL LGPlatterHostsActive(void) {
+    if (sLGPlatterHostsActive < 0) {
+        static dispatch_once_t observeOnce;
+        dispatch_once(&observeOnce, ^{
+            lgObservePreferenceReload(^{ sLGPlatterHostsActive = -1; });
+        });
+        sLGPlatterHostsActive = (lgHostEnabled(@"Notification") || lgHostEnabled(@"Banner")) ? 1 : 0;
+    }
+    return sLGPlatterHostsActive == 1;
+}
+
+// K.B.: classification only depends on where the view sits, so it is remembered until
+// the view moves to a different window or superview
+static void *kLGPlatterKindKey = &kLGPlatterKindKey;
+
+typedef NS_ENUM(NSInteger, LGPlatterKind) {
+    LGPlatterKindNone = 0,
+    LGPlatterKindPlatter,
+    LGPlatterKindAction,
+};
+
+@interface LGPlatterKindInfo : NSObject
+@property (nonatomic, weak) UIWindow *window;
+@property (nonatomic, weak) UIView *superview;
+@property (nonatomic) LGPlatterKind kind;
+@property (nonatomic) BOOL topBanner;
+@end
+@implementation LGPlatterKindInfo @end
+
 static BOOL LGIsTopBannerPresentation(UIView *view) {
     if (!view.window) return NO;
     if ([NSStringFromClass(view.window.class) isEqualToString:@"SBBannerWindow"]) return YES;
@@ -90,7 +123,7 @@ static UIView *LGNotificationAncestor(UIView *view) {
 }
 
 static UIColor *LGForcedPlatterTextColor(UIView *view) {
-    if (!view) return nil;
+    if (!view || !LGPlatterHostsActive()) return nil;
     if (LGIsTopBannerPresentation(view))
         return lgHostEnabled(@"Banner") &&
                view.traitCollection.userInterfaceStyle == UIUserInterfaceStyleLight
@@ -138,11 +171,29 @@ static void LGUpdatePlatterGlass(UIView *material) {
     // one platter class serves banners notifications and action buttons
 
     if (!material.window) return;
+    // K.B.: both hosts off means nothing to install, and prefs reload removes old glass
+    if (!LGPlatterHostsActive()) return;
     CFTimeInterval start = CACurrentMediaTime();
 
-    if (LGIsPlatterMaterial(material)) {
-        BOOL topBanner = LGIsTopBannerPresentation(material);
-        NSString *prefix = topBanner ? @"Banner" : @"Notification";
+    LGPlatterKindInfo *info = objc_getAssociatedObject(material, kLGPlatterKindKey);
+    if (!info || info.window != material.window || info.superview != material.superview) {
+        info = [LGPlatterKindInfo new];
+        info.window = material.window;
+        info.superview = material.superview;
+        if (LGIsPlatterMaterial(material)) {
+            info.kind = LGPlatterKindPlatter;
+            info.topBanner = LGIsTopBannerPresentation(material);
+        } else if (LGIsPlatterActionMaterial(material)) {
+            info.kind = LGPlatterKindAction;
+        } else {
+            info.kind = LGPlatterKindNone;
+        }
+        objc_setAssociatedObject(material, kLGPlatterKindKey, info,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
+    if (info.kind == LGPlatterKindPlatter) {
+        NSString *prefix = info.topBanner ? @"Banner" : @"Notification";
         NSString *previous = objc_getAssociatedObject(material, kLGPlatterClassificationKey);
         if (previous && ![previous isEqualToString:prefix]) {
             LGRemoveGlassFromMaterial(material, kGlassKey);
@@ -153,7 +204,7 @@ static void LGUpdatePlatterGlass(UIView *material) {
         }
         LGInstallRegisteredGlassInMaterial(material, kGlassKey, prefix,
                                            UIEdgeInsetsZero, -1.0, nil);
-    } else if (LGIsPlatterActionMaterial(material)) {
+    } else if (info.kind == LGPlatterKindAction) {
 
         LGInstallRegisteredGlassInMaterial(material, kGlassKey, @"Notification",
                                            UIEdgeInsetsZero,

@@ -69,6 +69,11 @@ void LGObservePreferenceChanges(dispatch_block_t block);
 BOOL LGDebugLoggingEnabled(void);
 void LGLog(NSString *format, ...);
 
+// K.B. performance work: YES on A13-and-older iPhones (iPhone X, XR, XS, 11, 8
+// and older) or when "Performance.Mode" is 1 (force low). "Performance.Mode" 2
+// forces full quality, 0 or unset means automatic detection.
+BOOL LGDeviceIsLowTier(void);
+
 CGColorSpaceRef LGSharedRGBColorSpace(void);
 UIImage *LGNormalizedImageForUpload(UIImage *image);
 NSNumber *LGTextureScaleKey(CGFloat scale);

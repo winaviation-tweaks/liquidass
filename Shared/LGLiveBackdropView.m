@@ -1,5 +1,6 @@
 #import "LGLiveBackdropView.h"
 #import "LGHostRegistry.h"
+#import "LGSharedSupport.h"
 #import "LGCoverSheetState.h"
 #import <CoreMotion/CoreMotion.h>
 #import <QuartzCore/QuartzCore.h>
@@ -168,8 +169,10 @@ static const CGFloat kLGPrefsControlScale = 1.50;
 static const CGFloat kLGDefaultScaleBudget = 8000.0;
 static CGFloat LGQualityValue(void) {
     id value = LGGlassPreferenceValue(@"Global.Quality");
+    // K.B.: older GPUs default to half the capture budget unless the user chose a value
+    CGFloat defaultQuality = LGDeviceIsLowTier() ? 0.5 : 1.0;
     CGFloat quality = [value respondsToSelector:@selector(doubleValue)]
-        ? (CGFloat)[value doubleValue] : 1.0;
+        ? (CGFloat)[value doubleValue] : defaultQuality;
     if (!isfinite(quality)) quality = 1.0;
     return fmin(1.0, fmax(0.1, quality));
 }
@@ -612,8 +615,11 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
             LGHostIdentifierForFilterType(_lgFilterType.UTF8String);
         if (hostIdentifier == LGHostIdentifierClock) {
             wantScale = kLGClockCaptureScale;
-        } else if (hostIdentifier == LGHostIdentifierCoverSheet ||
-                   hostIdentifier == LGHostIdentifierTabBar ||
+        } else if (hostIdentifier == LGHostIdentifierCoverSheet) {
+            // K.B.: this glass covers the whole screen during swipe-up, so
+            // older GPUs capture it at half scale (a quarter of the pixels)
+            wantScale = LGDeviceIsLowTier() ? 0.5 : 1.0;
+        } else if (hostIdentifier == LGHostIdentifierTabBar ||
                    hostIdentifier == LGHostIdentifierTabBarSelection) {
             wantScale = 1.0;
         } else {

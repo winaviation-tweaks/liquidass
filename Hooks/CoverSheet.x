@@ -840,8 +840,10 @@ static void LGCoverSheetSyncGlassGeometry(UIView *panel,
     glass.layer.transform = sourceLayer.transform;
     [CATransaction commit];
     if (moved) LGScheduleClockRecoveryRefreshForPresentationChange();
+    // K.B.: a flush forces a synchronous commit to the render server on every display
+    // link tick. Older GPUs skip it, since it costs more frames than it saves
     if (LGCoverSheetModeUsesGlass(sLGCoverSheetMode) &&
-        [NSThread isMainThread]) {
+        [NSThread isMainThread] && !LGDeviceIsLowTier()) {
         [CATransaction flush];
     }
 
