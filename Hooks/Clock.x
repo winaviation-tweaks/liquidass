@@ -3,6 +3,8 @@
 #import <QuartzCore/QuartzCore.h>
 #import <TargetConditionals.h>
 #import <objc/runtime.h>
+#import <CoreMotion/CoreMotion.h>
+#import <notify.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -712,6 +714,39 @@ static NSString *LGClockVariableFontPath(void) {
 
 @end
 
+// ---------------------------------------------------------------------------
+// K.B.: optional depth effects for the lock screen clock (parallax and shadow)
+// ---------------------------------------------------------------------------
+static BOOL LGClockParallaxEnabled(void) {
+    return LG_prefBool(@"Clock.Parallax.Enabled", NO);
+}
+static CGFloat LGClockParallaxStrength(void) {
+    return MAX(0.0, MIN(24.0, LG_prefFloat(@"Clock.Parallax.Strength", 8.0)));
+}
+static BOOL LGClockShadowEnabled(void) {
+    return LG_prefBool(@"Clock.Shadow.Enabled", NO);
+}
+static CGFloat LGClockShadowStrength(void) {
+    return MAX(0.0, MIN(1.0, LG_prefFloat(@"Clock.Shadow.Strength", 0.55)));
+}
+static CGFloat LGClockShadowSoftness(void) {
+    return MAX(2.0, MIN(40.0, LG_prefFloat(@"Clock.Shadow.Softness", 16.0)));
+}
+static CGFloat LGClockShadowOffset(void) {
+    return MAX(0.0, MIN(24.0, LG_prefFloat(@"Clock.Shadow.Offset", 6.0)));
+}
+// part of the apply signature, so changing these settings re-applies the clock
+static NSString *LGClockDepthFXSignature(void) {
+    return [NSString stringWithFormat:@"|fx%d|%.1f|%d|%.2f|%.1f|%.1f",
+            LGClockParallaxEnabled(), LGClockParallaxStrength(), LGClockShadowEnabled(),
+            LGClockShadowStrength(), LGClockShadowSoftness(), LGClockShadowOffset()];
+}
+
+@interface LGClockDepthMotion : NSObject
++ (instancetype)shared;
+- (void)refreshActivity;
+@end
+
 @interface LGClockState : NSObject
 @property (nonatomic, weak) UIView *host;
 @property (nonatomic, weak) UILabel *sourceLabel;
@@ -744,6 +779,12 @@ static NSString *LGClockVariableFontPath(void) {
 @property (nonatomic, copy) NSString *lastFontDiagnostic;
 @property (nonatomic) BOOL pullBlurActive;
 @property (nonatomic) BOOL pullBlurKnown;
+@property (nonatomic, strong) CAShapeLayer *depthShadowLayer;
+@property (nonatomic) CGPoint depthShadowBase;
+@property (nonatomic) CGPoint parallaxOffset;
+- (void)updateDepthShadowForPath:(CGPathRef)path labelFrame:(CGRect)labelFrame;
+- (void)removeDepthShadow;
+- (void)applyParallaxOffset:(CGPoint)offset;
 - (void)scheduleApply:(NSString *)reason;
 - (void)applyReason:(NSString *)reason;
 - (void)updatePullBlur;
@@ -833,6 +874,110 @@ static NSHashTable<LGClockState *> *LGClockStates(void) {
     dispatch_once(&once, ^{ states = [NSHashTable weakObjectsHashTable]; });
     return states;
 }
+
+@implementation LGClockDepthMotion {
+    CMMotionManager *_manager;
+    BOOL _running;
+    BOOL _screenBlanked;
+    BOOL _observing;
+    BOOL _haveReference;
+    int _blankToken;
+    double _refX, _refY, _smoothX, _smoothY;
+}
+
++ (instancetype)shared {
+    static LGClockDepthMotion *instance;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ instance = [LGClockDepthMotion new]; });
+    return instance;
+}
+
+- (void)observeScreenStateIfNeeded {
+    if (_observing) return;
+    _observing = YES;
+    __weak LGClockDepthMotion *weakSelf = self;
+    notify_register_dispatch("com.apple.springboard.hasBlankedScreen", &_blankToken,
+                             dispatch_get_main_queue(), ^(int token) {
+        uint64_t state = 0;
+        notify_get_state(token, &state);
+        LGClockDepthMotion *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf->_screenBlanked = (state != 0);
+        [strongSelf refreshActivity];
+    });
+}
+
+- (BOOL)wantsMotion {
+    if (!LGClockEnabled() || !LGClockParallaxEnabled() || _screenBlanked) return NO;
+    for (LGClockState *state in LGClockStates().allObjects) {
+        if (state.glassView) return YES;
+    }
+    return NO;
+}
+
+- (void)refreshActivity {
+    [self observeScreenStateIfNeeded];
+    BOOL wanted = [self wantsMotion];
+    if (wanted && !_running) {
+        [self start];
+    } else if (!wanted && _running) {
+        [self stop];
+    }
+    if (!wanted) {
+        for (LGClockState *state in LGClockStates().allObjects) {
+            [state applyParallaxOffset:CGPointZero];
+        }
+    }
+}
+
+- (void)start {
+    if (!_manager) _manager = [CMMotionManager new];
+    if (!_manager.deviceMotionAvailable) return;
+    _haveReference = NO;
+    _smoothX = _smoothY = 0.0;
+    _manager.deviceMotionUpdateInterval = 1.0 / 30.0;
+    __weak LGClockDepthMotion *weakSelf = self;
+    [_manager startDeviceMotionUpdatesToQueue:NSOperationQueue.mainQueue
+                                  withHandler:^(CMDeviceMotion *motion, NSError *error) {
+        if (!motion) return;
+        [weakSelf handleGravity:motion.gravity];
+    }];
+    _running = YES;
+}
+
+- (void)stop {
+    [_manager stopDeviceMotionUpdates];
+    _running = NO;
+}
+
+static inline double LGClockClampUnit(double value) {
+    return value < -1.0 ? -1.0 : (value > 1.0 ? 1.0 : value);
+}
+
+- (void)handleGravity:(CMAcceleration)gravity {
+    // the offset follows changes from the angle the phone is held at, not the
+    // absolute angle, so the clock settles back to center within a couple of seconds
+    if (!_haveReference) {
+        _refX = gravity.x;
+        _refY = gravity.y;
+        _haveReference = YES;
+    }
+    _refX += (gravity.x - _refX) * 0.02;
+    _refY += (gravity.y - _refY) * 0.02;
+    double targetX = LGClockClampUnit((gravity.x - _refX) * 4.0);
+    double targetY = LGClockClampUnit((gravity.y - _refY) * 4.0);
+    _smoothX += (targetX - _smoothX) * 0.25;
+    _smoothY += (targetY - _smoothY) * 0.25;
+
+    CGFloat strength = LGClockParallaxStrength();
+    CGPoint offset = CGPointMake((CGFloat)(-_smoothX * strength), (CGFloat)(_smoothY * strength));
+    for (LGClockState *state in LGClockStates().allObjects) {
+        if (!state.glassView.window) continue;
+        [state applyParallaxOffset:offset];
+    }
+}
+
+@end
 
 @interface LGClockMotionTracker : NSObject
 @property (nonatomic, strong) CADisplayLink *displayLink;
@@ -927,6 +1072,92 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
 }
 
 @implementation LGClockState
+
+- (void)removeDepthShadow {
+    [self.depthShadowLayer removeFromSuperlayer];
+    self.depthShadowLayer = nil;
+}
+
+- (void)applyParallaxOffset:(CGPoint)offset {
+    UIView *container = self.renderContainer;
+    LGLiveBackdropView *glass = self.glassView;
+    if (!container || !glass) {
+        self.parallaxOffset = CGPointZero;
+        return;
+    }
+    if (fabs(offset.x - self.parallaxOffset.x) < 0.04 &&
+        fabs(offset.y - self.parallaxOffset.y) < 0.04) return;
+    self.parallaxOffset = offset;
+    CGRect bounds = container.bounds;
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    glass.layer.position = CGPointMake(CGRectGetMidX(bounds) + offset.x,
+                                       CGRectGetMidY(bounds) + offset.y);
+    if (self.depthShadowLayer) {
+        // the shadow rests closer to the wallpaper, so it moves less than the digits
+        CGPoint base = self.depthShadowBase;
+        self.depthShadowLayer.position = CGPointMake(base.x + offset.x * 0.4,
+                                                     base.y + offset.y * 0.4);
+    }
+    [CATransaction commit];
+}
+
+- (void)updateDepthShadowForPath:(CGPathRef)path labelFrame:(CGRect)labelFrame {
+    UIView *container = self.renderContainer;
+    if (!path || !container || !LGClockShadowEnabled()) {
+        [self removeDepthShadow];
+        return;
+    }
+    CGRect bbox = CGPathGetPathBoundingBox(path);
+    if (CGRectIsNull(bbox) || CGRectIsEmpty(bbox)) {
+        [self removeDepthShadow];
+        return;
+    }
+    CGFloat strength = LGClockShadowStrength();
+    CGFloat softness = LGClockShadowSoftness();
+    CGFloat distance = LGClockShadowOffset();
+    CGFloat pad = ceil(softness * 3.0 + distance + 4.0);
+    CGRect frame = CGRectInset(bbox, -pad, -pad);
+    CGAffineTransform shift = CGAffineTransformMakeTranslation(-frame.origin.x, -frame.origin.y);
+    CGPathRef local = CGPathCreateCopyByTransformingPath(path, &shift);
+
+    CAShapeLayer *shadow = self.depthShadowLayer;
+    if (!shadow) {
+        shadow = [CAShapeLayer layer];
+        NSNull *none = NSNull.null;
+        shadow.actions = @{ @"path": none, @"shadowPath": none, @"bounds": none,
+                            @"position": none, @"shadowRadius": none, @"shadowOpacity": none,
+                            @"shadowOffset": none, @"fillColor": none };
+        shadow.shadowColor = UIColor.blackColor.CGColor;
+        shadow.contentsScale = UIScreen.mainScreen.scale;
+        // cached as a texture: moving the layer for parallax then costs almost nothing
+        shadow.rasterizationScale = UIScreen.mainScreen.scale;
+        shadow.shouldRasterize = YES;
+        self.depthShadowLayer = shadow;
+    }
+    if (shadow.superlayer != container.layer) {
+        [shadow removeFromSuperlayer];
+        [container.layer insertSublayer:shadow atIndex:0];
+    }
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    shadow.bounds = CGRectMake(0.0, 0.0, frame.size.width, frame.size.height);
+    CGPoint base = CGPointMake(CGRectGetMidX(frame) + labelFrame.origin.x,
+                               CGRectGetMidY(frame) + labelFrame.origin.y);
+    self.depthShadowBase = base;
+    shadow.position = CGPointMake(base.x + self.parallaxOffset.x * 0.4,
+                                  base.y + self.parallaxOffset.y * 0.4);
+    shadow.path = local;
+    shadow.shadowPath = local;
+    // dark body inside the digits, soft falloff outside
+    shadow.fillColor = [UIColor colorWithWhite:0.0 alpha:strength * 0.6].CGColor;
+    shadow.shadowOpacity = (float)strength;
+    shadow.shadowRadius = softness;
+    shadow.shadowOffset = CGSizeMake(0.0, distance);
+    [CATransaction commit];
+    CGPathRelease(local);
+}
+
 
 - (instancetype)init {
     self = [super init];
@@ -1048,6 +1279,7 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
                            nearestTop, LGClockBezelWidth(),
                            CGRectGetMinX(sourceRect), CGRectGetMinY(sourceRect),
                            CGRectGetWidth(sourceRect), CGRectGetHeight(sourceRect)];
+    signature = [signature stringByAppendingString:LGClockDepthFXSignature()];
     BOOL fontStateMatches = enabled ? (self.glassView != nil)
                                     : !LGClockLabelUsesOurFont(label);
     if ([signature isEqualToString:self.lastSignature] && fontStateMatches) {
@@ -1077,6 +1309,8 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
         self.pullBlurView = nil;
         self.glyphMaskView = nil;
         self.glyphMaskLayer = nil;
+        [self removeDepthShadow];
+        [[LGClockDepthMotion shared] refreshActivity];
     } else {
         CGFloat sourceSize = self.originalFont.pointSize;
         CGFloat pointSize = variableFontEnabled ? sourceSize * LGClockFontScale() : sourceSize;
@@ -1226,7 +1460,9 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
             [CATransaction setDisableActions:YES];
             [glass.layer removeAllAnimations];
             glass.layer.bounds = (CGRect){ CGPointZero, labelFrame.size };
-            glass.layer.position = CGPointMake(CGRectGetMidX(labelFrame), CGRectGetMidY(labelFrame));
+            CGPoint parallax = LGClockParallaxEnabled() ? self.parallaxOffset : CGPointZero;
+            glass.layer.position = CGPointMake(CGRectGetMidX(labelFrame) + parallax.x,
+                                               CGRectGetMidY(labelFrame) + parallax.y);
             pullBlur.frame = labelFrame;
             glass.clipsToBounds = NO;
             glass.layer.masksToBounds = NO;
@@ -1266,11 +1502,15 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
                                reason, text, NSStringFromCGRect(glass.bounds),
                                NSStringFromCGRect(CGPathGetBoundingBox(normalizedPath)));
                 [glass lgInvalidateFilterContents];
+                [self updateDepthShadowForPath:normalizedPath labelFrame:labelFrame];
                 CGPathRelease(normalizedPath);
                 CGPathRelease(glyphPath);
+            } else {
+                [self removeDepthShadow];
             }
             glass.maskView = maskView;
             [CATransaction commit];
+            [[LGClockDepthMotion shared] refreshActivity];
             if (![reason isEqualToString:@"motion"])
                 [[LGClockMotionTracker shared] trackMotion];
             BOOL filterReady = glass.lgFilterAttached;
@@ -1392,6 +1632,8 @@ static UIColor *LGClockPullTint(UITraitCollection *traits) {
     [self.pullBlurView removeFromSuperview];
     self.glassView = nil;
     self.pullBlurView = nil;
+    [self removeDepthShadow];
+    [[LGClockDepthMotion shared] refreshActivity];
     self.glyphMaskView = nil;
     self.glyphMaskLayer = nil;
     self.renderContainer = nil;

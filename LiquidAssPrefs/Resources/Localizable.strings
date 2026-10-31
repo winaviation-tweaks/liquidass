@@ -197,3 +197,17 @@
 "prefs.subtitle.date_format" = "Uses Unicode date pattern syntax, for example EEE MMM d.";
 "prefs.control.clock_fps_limit" = "FPS Limit";
 "prefs.subtitle.clock_fps_limit" = "Limits clock animation updates.";
+"prefs.section.clock_depth.title" = "Depth Effects";
+"prefs.section.clock_depth.subtitle" = "Parallax and shadow for the lock screen clock.";
+"prefs.control.clock_parallax" = "Parallax";
+"prefs.subtitle.clock_parallax" = "Moves the clock slightly as you tilt the phone.";
+"prefs.control.clock_parallax_strength" = "Parallax Strength";
+"prefs.subtitle.clock_parallax_strength" = "How far the clock moves, in points.";
+"prefs.control.clock_shadow" = "Shadow";
+"prefs.subtitle.clock_shadow" = "Adds a soft shadow behind the clock digits.";
+"prefs.control.clock_shadow_strength" = "Shadow Strength";
+"prefs.subtitle.clock_shadow_strength" = "How dark the shadow is.";
+"prefs.control.clock_shadow_softness" = "Shadow Softness";
+"prefs.subtitle.clock_shadow_softness" = "How far the shadow fades outward.";
+"prefs.control.clock_shadow_offset" = "Shadow Distance";
+"prefs.subtitle.clock_shadow_offset" = "How far the shadow sits below the digits.";

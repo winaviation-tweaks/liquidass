@@ -218,6 +218,16 @@ static UIColor *ccFullscreenDimBaseColor(void) {
     return [color colorWithAlphaComponent:1.0];
 }
 
+// K.B.: built once. These key lists used to be allocated for every filter on every walk
+static NSArray<NSString *> *ccBlurRadiusKeys(void) {
+    static NSArray<NSString *> *keys;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        keys = @[@"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius"];
+    });
+    return keys;
+}
+
 static BOOL ccIsBlurRadiusKey(NSString *key) {
     if (![key isKindOfClass:NSString.class]) return NO;
     return [key isEqualToString:@"inputRadius"] ||
@@ -248,7 +258,7 @@ static void ccClampBlurFilter(id filter, CGFloat radius) {
     // blur radius keys changed names across ios releases
     if (!filter) return;
     ccSetBlurCapMarker(filter, YES);
-    for (NSString *key in @[@"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius"]) {
+    for (NSString *key in ccBlurRadiusKeys()) {
         @try {
             id value = [filter valueForKey:key];
             id clamped = ccClampedBlurRadiusValue(value, radius);
@@ -340,7 +350,7 @@ static CGFloat ccBlurRadiusFromFilters(id filters) {
 
     CGFloat found = -1.0;
     for (id filter in (NSArray *)filters) {
-        for (NSString *key in @[@"inputRadius", @"radius", @"inputBlurRadius", @"blurRadius"]) {
+        for (NSString *key in ccBlurRadiusKeys()) {
             @try {
                 id value = [filter valueForKey:key];
                 if ([value respondsToSelector:@selector(doubleValue)]) {
@@ -356,11 +366,24 @@ static CGFloat ccBlurRadiusFromFilters(id filters) {
 static CGFloat ccPresentedBlurRadiusInLayerTree(CALayer *layer) {
     if (!layer) return -1.0;
 
-    CALayer *sampleLayer = layer.presentationLayer ?: layer;
-    CGFloat found = ccBlurRadiusFromFilters(sampleLayer.filters);
-    @try {
-        found = fmax(found, ccBlurRadiusFromFilters([sampleLayer valueForKey:@"backgroundFilters"]));
-    } @catch (__unused NSException *exception) {
+    CGFloat found = -1.0;
+    // K.B.: presentationLayer builds a copy of the layer, so it is only requested for
+    // layers that have filters. Most layers in the tree have none.
+    BOOL hasFilters = layer.filters.count > 0;
+    if (!hasFilters) {
+        @try {
+            id background = [layer valueForKey:@"backgroundFilters"];
+            hasFilters = [background isKindOfClass:NSArray.class] && [(NSArray *)background count] > 0;
+        } @catch (__unused NSException *exception) {
+        }
+    }
+    if (hasFilters) {
+        CALayer *sampleLayer = layer.presentationLayer ?: layer;
+        found = ccBlurRadiusFromFilters(sampleLayer.filters);
+        @try {
+            found = fmax(found, ccBlurRadiusFromFilters([sampleLayer valueForKey:@"backgroundFilters"]));
+        } @catch (__unused NSException *exception) {
+        }
     }
 
     for (CALayer *sublayer in layer.sublayers) {
@@ -552,16 +575,23 @@ static void ccStopFullscreenDimSync(UIView *overlayRoot);
 
     ccSyncFullscreenDimForRoot(root);
 
+    CFTimeInterval now = CACurrentMediaTime();
+    if (now >= sCCFullscreenDimSyncHardDeadline) {
+        ccSyncFullscreenDimForRoot(root);
+        ccStopFullscreenDimSync(root);
+        return;
+    }
+    // K.B.: the model and presented radius walks only matter for the settle check,
+    // so skip them while the animation window is still open
+    if (now < sCCFullscreenDimSyncDeadline) return;
+
     UIView *material = objc_getAssociatedObject(root, kCCFullscreenMaterialKey);
     CGFloat modelRadius = material ? ccModelBlurRadiusInLayerTree(material.layer) : -1.0;
     CGFloat presentedRadius = material ? ccPresentedBlurRadiusInLayerTree(material.layer) : -1.0;
-    CFTimeInterval now = CACurrentMediaTime();
     BOOL settled = (modelRadius >= 0.0 && presentedRadius >= 0.0 &&
                     fabs(modelRadius - presentedRadius) <= 0.025);
 
-    if ((now >= sCCFullscreenDimSyncDeadline && settled) ||
-        now >= sCCFullscreenDimSyncHardDeadline) {
-
+    if (settled) {
         ccSyncFullscreenDimForRoot(root);
         ccStopFullscreenDimSync(root);
     }
@@ -994,7 +1024,7 @@ static void ccRefreshContentContainerGlass(UIView *container) {
         ccClampBlurAnimation(animation, ccFullscreenBlurRadius());
     }
     NSNumber *desired = objc_getAssociatedObject(self, kCCRoundDesiredRadiusKey);
-    NSString *keyPath = [animation respondsToSelector:@selector(keyPath)]
+    NSString *keyPath = (desired && [animation respondsToSelector:@selector(keyPath)])
         ? [(id)animation keyPath] : nil;
     if (desired && [keyPath isEqualToString:@"cornerRadius"]) {
         if ([animation isKindOfClass:CABasicAnimation.class]) {

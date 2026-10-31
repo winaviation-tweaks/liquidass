@@ -10,10 +10,29 @@ These changes are marked as modifications of the original, as the license requir
 | File | Change |
 |---|---|
 | `Shared/LGSharedSupport.{h,m}` | New `LGDeviceIsLowTier()`: true on iPhone12,x and older (A13 and below). `Performance.Mode` pref: 0 auto, 1 force low, 2 force full. |
-| `Shared/LGLiveBackdropView.m` | On low-tier devices the default `Global.Quality` is 0.5 (an explicit user value still wins). Cover sheet glass captures at 0.5 scale instead of 1.0. |
+| `Shared/LGLiveBackdropView.m` | On low-tier devices the default `Global.Quality` is 0.5 (an explicit user value still wins). Cover sheet glass captures at 0.5 scale instead of 1.0. The native blur overlay (`LGSettingsLowBlurView`, its own backdrop layer, full-screen on the lock screen) follows the glass capture scale instead of rendering at full resolution. |
 | `Hooks/Clock.x` | `trackMotion` no longer wakes the display link when Clock is off or no clock exists. Default clock tracking is 30fps on low-tier devices unless `Clock.FPS` is set. |
 | `Hooks/Banner.x` | Notification/banner host state is cached (refreshed on prefs reload). Material classification is cached per window and superview instead of being redone on every `layoutSubviews`. `UILabel` hooks return immediately when both hosts are off. |
+| `Hooks/ControlCenter.x` | The blur-radius key list is built once instead of per filter. The per-frame dim sync no longer runs its extra model/presented layer-tree walks until the animation window ends. `presentationLayer` is only requested for layers that carry filters. `addAnimation:forKey:` reads the key path only when a corner-radius override exists. |
 | `Hooks/CoverSheet.x` | Skips `[CATransaction flush]` in the per-frame display link on low-tier devices. |
+
+## New (optional, off by default): clock depth effects
+
+Found under Clock > Depth Effects in the settings.
+
+| Setting | Key | Default |
+|---|---|---|
+| Parallax | `Clock.Parallax.Enabled` | off |
+| Parallax Strength (points) | `Clock.Parallax.Strength` | 8 |
+| Shadow | `Clock.Shadow.Enabled` | off |
+| Shadow Strength | `Clock.Shadow.Strength` | 0.55 |
+| Shadow Softness | `Clock.Shadow.Softness` | 16 |
+| Shadow Distance | `Clock.Shadow.Offset` | 6 |
+
+* Parallax moves the clock glass slightly with device tilt (CoreMotion gravity, measured relative to the angle the phone is held at, so it settles back to center). Motion stops while the screen is blanked or no clock glass exists.
+* The shadow is a layer under the glass in the clock's container, built from the same digit outline as the glass mask: a dark body inside the digits plus a soft outer falloff. It is rasterized once per time change, so tilting only moves a cached layer. It moves less than the digits so the clock reads as floating above the wallpaper.
+* Because the layer sits in the clock's container, below `PBUIPosterFloatingLayerReplica`, the depth effect subject still covers it.
+* Not implemented: automatic detection of the depth effect. Comparing the hierarchy with depth on and off showed identical `PBUIPosterFloatingView` / `PBUIPosterFloatingLayerReplica` views, so their existence is not a usable signal.
 
 ## Behaviour on newer devices
 

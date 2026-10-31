@@ -820,6 +820,51 @@ static NSArray<NSDictionary *> *LGClockDateFormatItems(void) {
     ];
 }
 
+static NSArray<NSDictionary *> *LGClockDepthItems(void) {
+    NSMutableDictionary *parallax =
+        [LGSwitchSetting(@"Clock.Parallax.Enabled",
+                         LGLocalized(@"prefs.control.clock_parallax"),
+                         LGLocalized(@"prefs.subtitle.clock_parallax"),
+                         NO) mutableCopy];
+    parallax[@"controls_following_panel"] = @YES;
+    NSMutableDictionary *shadow =
+        [LGSwitchSetting(@"Clock.Shadow.Enabled",
+                         LGLocalized(@"prefs.control.clock_shadow"),
+                         LGLocalized(@"prefs.subtitle.clock_shadow"),
+                         NO) mutableCopy];
+    shadow[@"controls_following_panel"] = @YES;
+    return @[
+        LGSectionSetting(LGLocalized(@"prefs.section.clock_depth.title"),
+                         LGLocalized(@"prefs.section.clock_depth.subtitle")),
+        parallax.copy,
+        LGSettingControlledByKey(
+            LGSliderSetting(@"Clock.Parallax.Strength",
+                            LGLocalized(@"prefs.control.clock_parallax_strength"),
+                            LGLocalized(@"prefs.subtitle.clock_parallax_strength"),
+                            8.0, 1.0, 20.0, 0),
+            @"Clock.Parallax.Enabled", @YES),
+        shadow.copy,
+        LGSettingControlledByKey(
+            LGSliderSetting(@"Clock.Shadow.Strength",
+                            LGLocalized(@"prefs.control.clock_shadow_strength"),
+                            LGLocalized(@"prefs.subtitle.clock_shadow_strength"),
+                            0.55, 0.1, 1.0, 2),
+            @"Clock.Shadow.Enabled", @YES),
+        LGSettingControlledByKey(
+            LGSliderSetting(@"Clock.Shadow.Softness",
+                            LGLocalized(@"prefs.control.clock_shadow_softness"),
+                            LGLocalized(@"prefs.subtitle.clock_shadow_softness"),
+                            16.0, 2.0, 40.0, 0),
+            @"Clock.Shadow.Enabled", @YES),
+        LGSettingControlledByKey(
+            LGSliderSetting(@"Clock.Shadow.Offset",
+                            LGLocalized(@"prefs.control.clock_shadow_offset"),
+                            LGLocalized(@"prefs.subtitle.clock_shadow_offset"),
+                            6.0, 0.0, 24.0, 0),
+            @"Clock.Shadow.Enabled", @YES),
+    ];
+}
+
 NSArray<NSDictionary *> *LGClockItems(void) {
     NSInteger maximumFPS = UIScreen.mainScreen.maximumFramesPerSecond;
     NSMutableArray<NSDictionary *> *rendererItems =
@@ -831,6 +876,7 @@ NSArray<NSDictionary *> *LGClockItems(void) {
                      atIndex:0];
     return LGJoinItemGroups(@[
         rendererItems,
+        LGClockDepthItems(),
         LGClockVariableFontItems(),
         LGClockDateFormatItems(),
     ]);

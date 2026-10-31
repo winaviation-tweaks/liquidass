@@ -343,6 +343,7 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
     CAShapeLayer    *_edge;
     UIView          *_nativeBlurView;
     CGFloat          _nativeBlurRadius;
+    CGFloat          _nativeBlurScale;
     BOOL             _backdropConfigured;
     BOOL             _filterAttached;
     uint32_t         _lgId;
@@ -457,6 +458,7 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
         [_nativeBlurView removeFromSuperview];
         _nativeBlurView = nil;
         _nativeBlurRadius = 0.0;
+        _nativeBlurScale = 0.0;
         return;
     }
 
@@ -478,6 +480,17 @@ static const CGFloat kLGGlassEdgeWidth = 1.0;
         @try { [_nativeBlurView setValue:@(radius) forKey:@"lgBlurRadius"]; }
         @catch (__unused NSException *exception) {}
         _nativeBlurRadius = radius;
+    }
+    // K.B.: this blur is its own backdrop layer and renders at full resolution unless told
+    // otherwise (a full-screen one sits on the lock screen). On older GPUs it follows the
+    // glass capture scale. A blur is low-frequency, so the lower scale is hard to see.
+    if (LGDeviceIsLowTier() && _appliedScale > 0.0) {
+        CGFloat blurScale = fmin(1.0, _appliedScale);
+        if (fabs(blurScale - _nativeBlurScale) > 0.02) {
+            @try { [_nativeBlurView.layer setValue:@(blurScale) forKey:@"scale"]; }
+            @catch (__unused NSException *exception) {}
+            _nativeBlurScale = blurScale;
+        }
     }
     [CATransaction commit];
 }
