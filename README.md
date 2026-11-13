@@ -5,6 +5,8 @@ This tweak is incomplete, issues WILL happen.
 
 Nightly builds that contains the bleeding edge changes are available [here](https://github.com/winaviation-tweaks/liquidass/releases/tag/nightly)
 
+And I'm still working on the tweak locally, just be patient :)
+
 ## Localization
 
 Usage: tools/localizations.rb COMMAND [PATH]
